@@ -60,10 +60,20 @@ data class ai_message(
     var is_error: Boolean = false,
     /** reasoning 模型的思考链内容（DeepSeek reasoning_content / Anthropic thinking block）。UI 展示用，不发给 API */
     var reasoning: String = "",
+    /** 上下文压缩产生的摘要消息（UI 渲染为折叠卡片；发 API 时作为 user 角色的上下文注入） */
+    val is_summary: Boolean = false,
+    /** 摘要消息元数据：压缩了多少条消息、压缩前估算 token 数（仅 is_summary 时有意义） */
+    val summary_origin_count: Int = 0,
+    val summary_tokens_before: Long = 0,
+    /** 系统通知（如"已暂停"）：仅 UI 展示，不发给 API */
+    val is_system_notice: Boolean = false,
     val timestamp: Long = System.currentTimeMillis()
 ) {
     /** 是否有实际可见文本（空白/纯工具调用的 assistant 消息不显示气泡） */
     val has_visible_text: Boolean get() = text.isNotBlank()
+
+    /** 估算该消息占用多少字符（上下文用量估算用：文本 + 工具调用参数） */
+    fun estimated_chars(): Int = text.length + tool_calls.sumOf { it.name.length + it.arguments_json.length }
 }
 
 /**

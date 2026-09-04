@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jmwl.gostudio.ai.ai_agent_loop
-import com.jmwl.gostudio.ai.ai_provider
+import com.jmwl.gostudio.ai.effective_context_chars
 import com.jmwl.gostudio.ai.model_capabilities_of
 import com.jmwl.gostudio.ui.theme.app_theme_provider
 import kotlinx.coroutines.Dispatchers
@@ -60,19 +60,17 @@ private const val ai_attachment_max_file_bytes = 8 * 1024 * 1024
 /**
  * AI 助手全屏页：
  * - 左上角图标打开左侧抽屉，展示最近会话（切换/新建/重命名/删除）
- * - 顶部为模型选择器 + 设置 + 关闭
- * - 底部输入框：左侧 + 号选择上传文件/图片，右侧蓝色发送按钮
+ * - 顶部为模型选择器（含上下文用量徽标）+ 设置 + 关闭
+ * - 底部输入框：左侧 + 号选择上传文件/图片，右侧发送/暂停/停止按钮
  */
 @Composable
 fun ai_chat_page(
     agent: ai_agent_loop,
     on_close: () -> Unit,
     on_open_settings: () -> Unit,
-    current_provider: ai_provider,
-    current_model: String,
-    available_models: Map<ai_provider, List<String>> = emptyMap(),
-    configured_providers: Set<ai_provider> = emptySet(),
-    on_session_model_change: (ai_provider, String) -> Unit = { _, _ -> },
+    current_choice: com.jmwl.gostudio.ai.ai_model_choice,
+    instances: List<com.jmwl.gostudio.ai.provider_instance> = emptyList(),
+    on_model_choice: (com.jmwl.gostudio.ai.ai_model_choice) -> Unit = {},
     project_dir: java.io.File? = null,
     global_prompts_dir: java.io.File? = null,
     project_prompts_dir: java.io.File? = null,
@@ -86,9 +84,14 @@ fun ai_chat_page(
     var input by rememberSaveable { mutableStateOf("") }
     var cursor_pos by remember { mutableStateOf(0) }
     val is_running by agent.is_running.collectAsState()
+    val is_paused by agent.is_paused.collectAsState()
+    val is_compacting by agent.compaction_running.collectAsState()
+    val context_usage by agent.context_usage.collectAsState()
+    val queued_count by agent.queued_count.collectAsState()
     val list_state = rememberLazyListState()
     val show_thinking = remember { com.jmwl.gostudio.ai.load_ai_settings(context).show_thinking_process }
     val last_text_len = agent.messages.lastOrNull()?.text?.length ?: 0
+    var show_usage_sheet by remember { mutableStateOf(false) }
 
     // 最近会话抽屉
     var drawer_open by remember { mutableStateOf(false) }
@@ -211,7 +214,7 @@ fun ai_chat_page(
             runCatching { target.writeBytes(bytes) }
             // 模型能力标注了不支持图片时提醒（未标注的不打扰）
             val image_caps = com.jmwl.gostudio.ai.cached_ai_settings(context)
-                .model_capabilities_of(current_model)?.supports_image
+                .model_capabilities_of(current_choice.model)?.supports_image
             withContext(Dispatchers.Main) {
                 append_attachment(name, "[图片已保存到项目: ${target.absolutePath}]")
                 if (image_caps == false) {
@@ -243,12 +246,13 @@ fun ai_chat_page(
                     )
                 }
                 ai_model_selector(
-                    current_provider = current_provider,
-                    current_model = current_model,
-                    available_models = available_models,
-                    configured_providers = configured_providers,
-                    on_session_model_change = on_session_model_change,
+                    current_choice = current_choice,
+                    instances = instances,
+                    on_choice = on_model_choice,
                     on_open_settings = on_open_settings,
+                    agent_running = is_running,
+                    context_usage = context_usage,
+                    on_context_badge_click = { show_usage_sheet = true },
                     modifier = Modifier.weight(1f)
                 )
                 IconButton(onClick = on_open_settings, modifier = Modifier.size(38.dp)) {
@@ -301,10 +305,29 @@ fun ai_chat_page(
                     if (is_running && agent.messages.none { it.streaming }) {
                         item(key = "waiting-bubble") { ai_waiting_bubble() }
                     }
+                    // 上下文压缩进行中（要调一次模型生成摘要，可能数秒）
+                    if (is_compacting) {
+                        item(key = "compacting") { ai_compacting_indicator() }
+                    }
                 }
             }
 
-            // 待发送附件 chips
+            // 待发送附件 chips / 暂停横幅 / 排队提示
+            if (is_paused && !is_running) {
+                ai_pause_banner(queued_count = queued_count, on_resume = { agent.resume() })
+            } else if (queued_count > 0 && is_running) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Default.Schedule, contentDescription = null, tint = colors.subtitle, modifier = Modifier.size(12.dp))
+                    Text(
+                        text = "已排队 $queued_count 条消息，当前步骤结束后发送",
+                        fontSize = 10.5.sp, color = colors.subtitle
+                    )
+                }
+            }
             if (attachments.isNotEmpty()) {
                 androidx.compose.foundation.layout.FlowRow(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
@@ -441,6 +464,23 @@ fun ai_chat_page(
                 }
 
                 if (is_running) {
+                    // 运行中：暂停（当前步骤完成后停住，消息排队保留）+ 停止
+                    FilledIconButton(
+                        onClick = { if (is_paused) agent.resume() else agent.pause() },
+                        modifier = Modifier.size(38.dp),
+                        shape = CircleShape,
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = if (is_paused) colors.success else colors.warning
+                        )
+                    ) {
+                        Icon(
+                            if (is_paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                            contentDescription = if (is_paused) "继续" else "暂停",
+                            tint = colors.dialog_clone_text,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
                     FilledIconButton(
                         onClick = { agent.cancel() },
                         modifier = Modifier.size(38.dp),
@@ -477,6 +517,16 @@ fun ai_chat_page(
                 }
             }
         }
+        }
+
+        // 上下文用量详情弹层（徽标点击）
+        if (show_usage_sheet) {
+            ai_context_usage_sheet(
+                usage = context_usage,
+                limit_chars = com.jmwl.gostudio.ai.cached_ai_settings(context).effective_context_chars(),
+                on_compact_now = { agent.compact_now() },
+                on_dismiss = { show_usage_sheet = false }
+            )
         }
 
         // 左侧抽屉遮罩

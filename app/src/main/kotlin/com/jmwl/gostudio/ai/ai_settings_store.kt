@@ -107,6 +107,38 @@ fun new_provider_instance(provider: ai_provider, existing: List<provider_instanc
     )
 }
 
+/**
+ * 会话内即时切换的模型选择（快照完整连接信息，支持同提供商多实例/自定义中转）。
+ * 下一轮请求即生效——agent loop 每轮都通过 settings_provider 重新读设置，
+ * activity 侧把该选择覆盖进返回的 ai_settings_state。
+ */
+data class ai_model_choice(
+    val provider: ai_provider,
+    val model: String,
+    val base_url: String,
+    val api_key: String,
+    /** 展示名（实例 label 或提供商名） */
+    val label: String = provider.display_name
+) {
+    companion object {
+        /** 从全局设置的当前生效字段构造（无会话 override 时的默认选择） */
+        fun from_settings(state: ai_settings_state): ai_model_choice = ai_model_choice(
+            provider = state.provider,
+            model = state.model,
+            base_url = state.base_url,
+            api_key = state.api_key,
+            label = state.active_provider_instance()?.label ?: state.provider.display_name
+        )
+    }
+}
+
+/** 判断会话选择与全局当前生效配置是否一致（一致时 UI 不显示「已切换」标记） */
+fun ai_model_choice.matches_settings(state: ai_settings_state): Boolean {
+    val inst = state.active_provider_instance()
+    return provider == state.provider && model == state.model &&
+        base_url == state.base_url && (inst == null || label == inst.label)
+}
+
 data class ai_settings_state(
     val provider: ai_provider = ai_provider.ZHIPU,
     val base_url: String = ai_provider.ZHIPU.base_url,
@@ -121,6 +153,10 @@ data class ai_settings_state(
     val custom_models: Map<String, List<String>> = emptyMap(),
     /** 上下文窗口上限（用于截断历史消息），默认 60000 token 约等于 24 万字符估算 */
     val max_context_chars: Int = 200_000,
+    /** 自动上下文压缩：估算用量超阈值时把旧消息摘要成 checkpoint（关闭则退化请求前截断） */
+    val auto_compact: Boolean = true,
+    /** 压缩触发阈值（上下文用量百分比，参考 pi 的 window-reserve 机制换算） */
+    val compact_threshold_percent: Int = 80,
     val enable_tools: Boolean = true,
     val enable_bash: Boolean = true,
     val enable_write: Boolean = true,
@@ -329,6 +365,8 @@ fun load_ai_settings(context: Context): ai_settings_state {
         active_instance_id = active_instance_id,
         custom_models = custom_models,
         max_context_chars = prefs.getInt("max_context_chars", 200_000),
+        auto_compact = prefs.getBoolean("auto_compact", true),
+        compact_threshold_percent = prefs.getInt("compact_threshold_percent", 80),
         enable_tools = prefs.getBoolean("enable_tools", true),
         enable_bash = prefs.getBoolean("enable_bash", true),
         enable_write = prefs.getBoolean("enable_write", true),
@@ -354,6 +392,8 @@ fun save_ai_settings(context: Context, settings: ai_settings_state) {
         putString("active_instance_id", settings.active_instance_id)
         putString("custom_models_json", settings_gson.toJson(settings.custom_models))
         putInt("max_context_chars", settings.max_context_chars)
+        putBoolean("auto_compact", settings.auto_compact)
+        putInt("compact_threshold_percent", settings.compact_threshold_percent)
         putBoolean("enable_tools", settings.enable_tools)
         putBoolean("enable_bash", settings.enable_bash)
         putBoolean("enable_write", settings.enable_write)

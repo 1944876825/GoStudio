@@ -23,8 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jmwl.gostudio.ai.ai_agent_loop
-import com.jmwl.gostudio.ai.ai_provider
-import com.jmwl.gostudio.ai.ai_settings_state
+import com.jmwl.gostudio.ai.effective_context_chars
 import com.jmwl.gostudio.ui.theme.app_theme_provider
 import kotlinx.coroutines.launch
 
@@ -35,20 +34,17 @@ import kotlinx.coroutines.launch
  *
  * @param agent agent loop 实例
  * @param on_open_settings 打开 AI 设置页的回调
- * @param current_provider 当前会话生效的提供商
- * @param current_model 当前会话生效的模型
- * @param available_models 每个供应商可用的模型（默认列表 + 动态获取），用于选择器展示
- * @param on_session_model_change 会话内切换提供商/模型的回调
+ * @param current_choice 当前会话生效的模型选择（完整连接快照）
+ * @param instances 已配置的提供商实例（模型切换面板数据源）
+ * @param on_model_choice 会话内切换模型的回调（下一轮请求生效）
  */
 @Composable
 fun ai_chat_panel(
     agent: ai_agent_loop,
     on_open_settings: () -> Unit,
-    current_provider: ai_provider,
-    current_model: String,
-    available_models: Map<ai_provider, List<String>> = emptyMap(),
-    configured_providers: Set<ai_provider> = emptySet(),
-    on_session_model_change: (ai_provider, String) -> Unit = { _, _ -> },
+    current_choice: com.jmwl.gostudio.ai.ai_model_choice,
+    instances: List<com.jmwl.gostudio.ai.provider_instance> = emptyList(),
+    on_model_choice: (com.jmwl.gostudio.ai.ai_model_choice) -> Unit = {},
     project_dir: java.io.File? = null,
     global_prompts_dir: java.io.File? = null,
     project_prompts_dir: java.io.File? = null,
@@ -59,8 +55,13 @@ fun ai_chat_panel(
     val context = androidx.compose.ui.platform.LocalContext.current
     var input by rememberSaveable { mutableStateOf("") }
     val is_running by agent.is_running.collectAsState()
+    val is_paused by agent.is_paused.collectAsState()
+    val is_compacting by agent.compaction_running.collectAsState()
+    val context_usage by agent.context_usage.collectAsState()
+    val queued_count by agent.queued_count.collectAsState()
     val list_state = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    var show_usage_sheet by remember { mutableStateOf(false) }
     // 思考过程开关：顶层读一次（避免每条消息组合里都读磁盘）
     val show_thinking = remember { com.jmwl.gostudio.ai.load_ai_settings(context).show_thinking_process }
     // 最后一条消息文本长度（流式增长时也触发滚动）
@@ -115,12 +116,13 @@ fun ai_chat_panel(
         ) {
             // 提供商/模型选择器
             ai_model_selector(
-                current_provider = current_provider,
-                current_model = current_model,
-                available_models = available_models,
-                configured_providers = configured_providers,
-                on_session_model_change = on_session_model_change,
+                current_choice = current_choice,
+                instances = instances,
+                on_choice = on_model_choice,
                 on_open_settings = on_open_settings,
+                agent_running = is_running,
+                context_usage = context_usage,
+                on_context_badge_click = { show_usage_sheet = true },
                 modifier = Modifier.weight(1f)
             )
             IconButton(onClick = on_open_settings, modifier = Modifier.size(32.dp)) {
@@ -186,6 +188,10 @@ fun ai_chat_panel(
                 if (is_running && agent.messages.none { it.streaming }) {
                     item(key = "waiting-bubble") { ai_waiting_bubble() }
                 }
+                // 上下文压缩进行中
+                if (is_compacting) {
+                    item(key = "compacting") { ai_compacting_indicator() }
+                }
             }
         }
 
@@ -209,6 +215,33 @@ fun ai_chat_panel(
                     }
                 }
             )
+        }
+
+        // 上下文用量详情弹层（徽标点击）
+        if (show_usage_sheet) {
+            ai_context_usage_sheet(
+                usage = context_usage,
+                limit_chars = com.jmwl.gostudio.ai.cached_ai_settings(context).effective_context_chars(),
+                on_compact_now = { agent.compact_now() },
+                on_dismiss = { show_usage_sheet = false }
+            )
+        }
+
+        // 暂停横幅 / 排队提示
+        if (is_paused && !is_running) {
+            ai_pause_banner(queued_count = queued_count, on_resume = { agent.resume() })
+        } else if (queued_count > 0 && is_running) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(Icons.Default.Schedule, contentDescription = null, tint = colors.subtitle, modifier = Modifier.size(12.dp))
+                Text(
+                    text = "已排队 $queued_count 条消息，当前步骤结束后发送",
+                    fontSize = 10.5.sp, color = colors.subtitle
+                )
+            }
         }
 
         // 输入区（imePadding 让键盘不遮挡）
@@ -256,6 +289,23 @@ fun ai_chat_panel(
                 )
             }
             if (is_running) {
+                // 运行中：暂停（当前步骤完成后停住，排队消息保留）+ 停止
+                FilledIconButton(
+                    onClick = { if (is_paused) agent.resume() else agent.pause() },
+                    modifier = Modifier.size(44.dp),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = if (is_paused) colors.success else colors.warning
+                    )
+                ) {
+                    Icon(
+                        if (is_paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                        contentDescription = if (is_paused) "继续" else "暂停",
+                        tint = colors.dialog_clone_text,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(Modifier.width(6.dp))
                 FilledIconButton(
                     onClick = { agent.cancel() },
                     modifier = Modifier.size(44.dp),

@@ -54,5 +54,8 @@ class ai_steering_queue {
     /** 是否有排队消息 */
     fun has_pending(): Boolean = !queue.isEmpty()
 
+    /** 排队消息条数（UI「已排队 N 条」反馈） */
+    fun size(): Int = queue.size
+
     fun clear() = queue.clear()
 }

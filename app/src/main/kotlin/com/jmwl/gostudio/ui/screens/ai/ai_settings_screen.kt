@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -1475,6 +1476,43 @@ private fun ai_behavior_settings_screen(
                 ai_switch_card(icon = Icons.Default.Visibility, title = "显示思考过程", description = "展示 AI 读文件、执行命令等中间步骤", checked = settings.show_thinking_process, colors = colors, is_top = true, is_bottom = false) { settings = settings.copy(show_thinking_process = it) }
                 ai_group_divider()
                 ai_switch_card(icon = Icons.Default.UnfoldMore, title = "自动展开", description = "思考过程默认展开（否则折叠只显示标题）", checked = settings.auto_expand_thinking, colors = colors, is_top = false, is_bottom = true) { settings = settings.copy(auto_expand_thinking = it) }
+            }
+
+            Spacer(modifier = Modifier.height(22.dp))
+
+            // 上下文管理（自动压缩）
+            ai_group_title(colors = colors, title = "上下文管理")
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(RoundedCornerShape(12.dp))) {
+                ai_switch_card(
+                    icon = Icons.Default.Compress,
+                    title = "自动压缩历史",
+                    description = "用量超阈值时把较早的对话摘要成检查点，继续长会话",
+                    checked = settings.auto_compact,
+                    colors = colors,
+                    is_top = true,
+                    is_bottom = !settings.auto_compact
+                ) { settings = settings.copy(auto_compact = it) }
+                if (settings.auto_compact) {
+                    ai_group_divider()
+                    Column(modifier = Modifier.fillMaxWidth().background(colors.card_bg).padding(horizontal = 14.dp, vertical = 8.dp)) {
+                        Text("触发阈值", fontSize = 12.sp, color = colors.card_text_title, fontWeight = FontWeight.Medium)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(70 to "70%", 80 to "80%", 90 to "90%").forEach { (value, label) ->
+                                ai_caps_preset_chip(
+                                    label = label,
+                                    selected = settings.compact_threshold_percent == value,
+                                    colors = colors
+                                ) { settings = settings.copy(compact_threshold_percent = value) }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "上下文用量超过模型窗口的该比例时触发（模型级上下文标注优先于全局上限）",
+                            fontSize = 10.sp, lineHeight = 13.sp, color = colors.card_text_subtitle
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(40.dp))

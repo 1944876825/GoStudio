@@ -142,8 +142,8 @@ fun main_navigation(
     val context = LocalContext.current
     val coroutine_scope = rememberCoroutineScope()
 
-    // 会话级提供商/模型 override（null=跟随全局设置）
-    var ai_session_override by remember { mutableStateOf<Pair<ai_provider, String>?>(null) }
+    // 会话级模型选择 override（null=跟随全局设置）
+    var ai_session_choice by remember { mutableStateOf<com.jmwl.gostudio.ai.ai_model_choice?>(null) }
 
     // AI agent：主界面用通用问答（无项目上下文，不带文件工具）
     val ai_agent = remember {
@@ -155,14 +155,14 @@ fun main_navigation(
         val skill_mgr = com.jmwl.gostudio.ai.skills.ai_skill_manager(global_skills_dir, null, com.jmwl.gostudio.plugins.plugin_manager.skill_dirs())
         ai_agent_loop(
             settings_provider = {
-                // 会话 override 优先，覆盖全局的提供商/模型/key
-                val base = load_ai_settings(context)
-                ai_session_override?.let { (p, m) ->
+                // 会话选择优先（快照含 base_url/key）；用内存缓存避免每轮 Keystore I/O
+                val base = com.jmwl.gostudio.ai.cached_ai_settings(context)
+                ai_session_choice?.let { c ->
                     base.copy(
-                        provider = p,
-                        model = m,
-                        base_url = p.base_url.ifBlank { base.base_url },
-                        api_key = base.api_keys[p] ?: base.api_key
+                        provider = c.provider,
+                        model = c.model,
+                        base_url = c.base_url.ifBlank { base.base_url },
+                        api_key = c.api_key.ifBlank { base.api_key }
                     )
                 } ?: base
             },
@@ -342,14 +342,9 @@ fun main_navigation(
                     agent = ai_agent,
                     on_back = { nav_controller.popBackStack() },
                     on_open_settings = { nav_controller.navigate("ai_settings") },
-                    current_provider = ai_session_override?.first ?: ai_settings_state.provider,
-                    current_model = ai_session_override?.second ?: ai_settings_state.model,
-                    available_models = ai_provider.entries.associateWith { p ->
-                        ai_settings_state.custom_models[p.base_url] ?: emptyList()
-                    },
-                    configured_providers = ai_settings_state.api_keys
-                        .filter { it.value.isNotBlank() }.keys,
-                    on_session_model_change = { p, m -> ai_session_override = p to m }
+                    current_choice = ai_session_choice ?: com.jmwl.gostudio.ai.ai_model_choice.from_settings(ai_settings_state),
+                    instances = ai_settings_state.instances,
+                    on_model_choice = { choice -> ai_session_choice = choice }
                 )
             }
             composable("learn") {

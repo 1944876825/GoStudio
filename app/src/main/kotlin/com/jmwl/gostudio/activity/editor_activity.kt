@@ -143,36 +143,24 @@ class editor_activity : ComponentActivity() {
     private var ai_file_change_notifier: com.jmwl.gostudio.ai.ai_file_change_notifier? = null
     /** AI 设置页覆盖层开关 */
     private var show_ai_settings by mutableStateOf(false)
-    /** 会话级提供商/模型 override（null=跟随全局设置）。可观察以驱动选择器显示。 */
-    private var _session_override by mutableStateOf<Pair<com.jmwl.gostudio.ai.ai_provider, String>?>(null)
-    val session_override: Pair<com.jmwl.gostudio.ai.ai_provider, String>? get() = _session_override
+    /** 会话级模型选择 override（null=跟随全局设置）。快照完整连接信息，支持多实例切换。 */
+    private var _session_choice by mutableStateOf<com.jmwl.gostudio.ai.ai_model_choice?>(null)
+    val session_choice: com.jmwl.gostudio.ai.ai_model_choice? get() = _session_choice
 
     /**
-     * 以下 4 个函数会在每次 Compose 重组时被调用（光标每移动一次就重组一次），
+     * 以下函数会在每次 Compose 重组时被调用（光标每移动一次就重组一次），
      * 必须走内存缓存 [cached_ai_settings]；直接用 load_ai_settings 会在主线程反复做
      * EncryptedSharedPreferences/Keystore I/O，导致光标移动卡顿。
      */
-    /** 当前生效的提供商（会话 override 优先，否则全局） */
-    private fun current_ai_provider(): com.jmwl.gostudio.ai.ai_provider =
-        _session_override?.first ?: com.jmwl.gostudio.ai.cached_ai_settings(this).provider
+    /** 当前生效的模型选择（会话 override 优先，否则从全局设置构造） */
+    private fun current_ai_choice(): com.jmwl.gostudio.ai.ai_model_choice =
+        _session_choice ?: com.jmwl.gostudio.ai.ai_model_choice.from_settings(
+            com.jmwl.gostudio.ai.cached_ai_settings(this)
+        )
 
-    /** 当前生效的模型 */
-    private fun current_ai_model(): String =
-        _session_override?.second ?: com.jmwl.gostudio.ai.cached_ai_settings(this).model
-
-    /** 各提供商可用的模型（来自全局 custom_models 缓存，按 base_url 映射到 provider） */
-    private fun current_ai_available_models(): Map<com.jmwl.gostudio.ai.ai_provider, List<String>> {
-        val s = com.jmwl.gostudio.ai.cached_ai_settings(this)
-        return com.jmwl.gostudio.ai.ai_provider.entries.associateWith { p ->
-            s.custom_models[p.base_url] ?: emptyList()
-        }
-    }
-
-    /** 已配置 key 的供应商（会话栏选择器只显示这些） */
-    private fun configured_ai_providers(): Set<com.jmwl.gostudio.ai.ai_provider> {
-        val s = com.jmwl.gostudio.ai.cached_ai_settings(this)
-        return s.api_keys.filter { it.value.isNotBlank() }.keys
-    }
+    /** 已配置的提供商实例列表（模型切换面板数据源） */
+    private fun current_ai_instances(): List<com.jmwl.gostudio.ai.provider_instance> =
+        com.jmwl.gostudio.ai.cached_ai_settings(this).instances
 
     private val file_tree_children_cache = mutableMapOf<String, List<editor_file_node>>()
     private lateinit var search_controller: editor_search_controller
@@ -451,11 +439,9 @@ class editor_activity : ComponentActivity() {
             on_diagnostic_click = { diagnostic -> open_diagnostic_sheet(diagnostic) },
             ai_agent = ai_agent,
             on_open_ai_settings = { show_ai_settings = true },
-            ai_current_provider = current_ai_provider(),
-            ai_current_model = current_ai_model(),
-            ai_available_models = current_ai_available_models(),
-            ai_configured_providers = configured_ai_providers(),
-            on_ai_session_model_change = { p, m -> _session_override = p to m },
+            ai_current_choice = current_ai_choice(),
+            ai_instances = current_ai_instances(),
+            on_ai_model_choice = { choice -> _session_choice = choice },
             ai_global_prompts_dir = ai_global_prompts_dir,
             ai_project_prompts_dir = ai_project_prompts_dir,
             ai_open_trigger = ai_open_trigger,
@@ -876,15 +862,15 @@ class editor_activity : ComponentActivity() {
 
         ai_agent = com.jmwl.gostudio.ai.ai_agent_loop(
             settings_provider = {
-                // 会话级 override：切了提供商/模型则覆盖全局设置（含回填对应供应商的 key）
+                // 会话级模型选择：切了实例/模型则覆盖全局设置（快照含 base_url/key，多实例可切）
                 // 用内存缓存版本：agent 每轮都会调用，避免重复 Keystore I/O（保存设置时会同步缓存）
                 val base = com.jmwl.gostudio.ai.cached_ai_settings(this)
-                _session_override?.let { (p, m) ->
+                _session_choice?.let { c ->
                     base.copy(
-                        provider = p,
-                        model = m,
-                        base_url = p.base_url.ifBlank { base.base_url },
-                        api_key = base.api_keys[p] ?: base.api_key
+                        provider = c.provider,
+                        model = c.model,
+                        base_url = c.base_url.ifBlank { base.base_url },
+                        api_key = c.api_key.ifBlank { base.api_key }
                     )
                 } ?: base
             },

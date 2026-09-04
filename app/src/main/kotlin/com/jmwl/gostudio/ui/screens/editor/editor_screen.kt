@@ -143,11 +143,11 @@ internal fun editor_screen(
     on_diagnostic_click: (com.jmwl.gostudio.lsp.gopls.gopls_diagnostic) -> Unit = {},
     ai_agent: com.jmwl.gostudio.ai.ai_agent_loop? = null,
     on_open_ai_settings: () -> Unit = {},
-    ai_current_provider: com.jmwl.gostudio.ai.ai_provider = com.jmwl.gostudio.ai.ai_provider.ZHIPU,
-    ai_current_model: String = "",
-    ai_available_models: Map<com.jmwl.gostudio.ai.ai_provider, List<String>> = emptyMap(),
-    ai_configured_providers: Set<com.jmwl.gostudio.ai.ai_provider> = emptySet(),
-    on_ai_session_model_change: (com.jmwl.gostudio.ai.ai_provider, String) -> Unit = { _, _ -> },
+    ai_current_choice: com.jmwl.gostudio.ai.ai_model_choice = com.jmwl.gostudio.ai.ai_model_choice(
+        provider = com.jmwl.gostudio.ai.ai_provider.ZHIPU, model = "", base_url = "", api_key = "", label = "未配置"
+    ),
+    ai_instances: List<com.jmwl.gostudio.ai.provider_instance> = emptyList(),
+    on_ai_model_choice: (com.jmwl.gostudio.ai.ai_model_choice) -> Unit = {},
     ai_global_prompts_dir: java.io.File? = null,
     ai_project_prompts_dir: java.io.File? = null,
     /** 递增触发器：外部想让 AI 弹窗打开时把这个值 +1 */
@@ -716,11 +716,9 @@ internal fun editor_screen(
                         // 保持 AI 页面在下层：设置页关闭后返回这里，而不是退出到工作区
                         on_open_ai_settings()
                     },
-                    current_provider = ai_current_provider,
-                    current_model = ai_current_model,
-                    available_models = ai_available_models,
-                    configured_providers = ai_configured_providers,
-                    on_session_model_change = on_ai_session_model_change,
+                    current_choice = ai_current_choice,
+                    instances = ai_instances,
+                    on_model_choice = on_ai_model_choice,
                     project_dir = java.io.File(project_root_path),
                     global_prompts_dir = ai_global_prompts_dir,
                     project_prompts_dir = ai_project_prompts_dir,

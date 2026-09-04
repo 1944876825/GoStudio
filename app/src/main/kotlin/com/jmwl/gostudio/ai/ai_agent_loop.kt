@@ -7,16 +7,14 @@ import com.jmwl.gostudio.ai.tools.ai_tool_registry
 import com.jmwl.gostudio.ai.tools.execute_safely
 import com.jmwl.gostudio.ai.tools.string_or
 import com.google.gson.JsonParser
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 
 /**
- * AI Agent 会话状态 + 调度循环（接入 skill/@引用/AGENTS.md/MCP/持久化/压缩/steering 全部能力）。
+ * AI Agent 会话状态 + 调度循环（接入 skill/@引用/AGENTS.md/MCP/持久化/压缩/steering/暂停 全部能力）。
  *
  * 新增能力（均通过构造函数可选注入，不传则降级为第一阶段行为）：
  * - [input_processor]：@文件引用、/命令模板、/skill 激活
@@ -25,6 +23,15 @@ import kotlinx.coroutines.withContext
  * - [mcp_manager]：MCP 工具服务器（start/stop 生命周期）
  * - [file_change_notifier]：write/edit 改文件后通知编辑器刷新
  * - [steering_queue]：运行中排队新消息
+ *
+ * 暂停/恢复（参考 pi 的 turn 边界机制）：
+ * [pause] 后 agent 不会打断正在进行的流式回复或工具调用，而是在
+ * 「当前工具批次结束、下一轮请求前」的边界停下；排队的 steering 消息保留，
+ * [resume] 时注入并继续循环。
+ *
+ * 自动上下文压缩（参考 pi 的 threshold compaction）：
+ * 每次发送/每轮请求前估算上下文用量，超过阈值（[ai_settings_state.compact_threshold_percent]）
+ * 时把旧消息摘要成一条 checkpoint 消息并回写 [messages]（UI 显示为摘要卡片，持久化）。
  */
 class ai_agent_loop(
     private val settings_provider: () -> ai_settings_state,
@@ -44,13 +51,33 @@ class ai_agent_loop(
     private val _is_running = MutableStateFlow(false)
     val is_running: StateFlow<Boolean> = _is_running
 
+    /** 暂停中（当前步骤完成后停住，等待 resume 或新消息） */
+    private val _is_paused = MutableStateFlow(false)
+    val is_paused: StateFlow<Boolean> = _is_paused
+
+    /** 正在执行上下文压缩（UI 显示压缩指示器） */
+    private val _compaction_running = MutableStateFlow(false)
+    val compaction_running: StateFlow<Boolean> = _compaction_running
+
+    /** 估算的上下文用量（0..1+，相对 effective_context_chars；UI 用量徽标） */
+    private val _context_usage = MutableStateFlow(0f)
+    val context_usage: StateFlow<Float> = _context_usage
+
+    /** 运行中排队的 steering 消息数（UI 反馈「已排队 N 条」） */
+    private val _queued_count = MutableStateFlow(0)
+    val queued_count: StateFlow<Int> = _queued_count
+
     /** MCP server 连接数（UI 可展示） */
     private val _mcp_server_count = MutableStateFlow(0)
     val mcp_server_count: StateFlow<Int> = _mcp_server_count
 
     private var current_job: Job? = null
     private var cancelled = false
+    @Volatile private var paused = false
     private val main_handler = Handler(Looper.getMainLooper())
+
+    /** 最近一次构建的 system prompt 长度（上下文用量估算用，避免每次重读 AGENTS.md） */
+    @Volatile private var last_system_prompt_len = 0
 
     /** 是否已初始化（启动时拉起 MCP、加载 skill、恢复会话） */
     private var initialized = false
@@ -77,6 +104,7 @@ class ai_agent_loop(
                 val count = it.start(tool_registry)
                 _mcp_server_count.value = count
             }
+            on_main { refresh_context_usage() }
         }
     }
 
@@ -84,6 +112,7 @@ class ai_agent_loop(
         if (_is_running.value) {
             // 运行中：排队为 steering 消息
             steering_queue?.enqueue(text)
+            _queued_count.value = steering_queue?.size() ?: 0
             return
         }
         val settings = settings_provider()
@@ -97,14 +126,62 @@ class ai_agent_loop(
             }
             return
         }
+        // 暂停中收到新消息：注入排队消息 + 本条，解除暂停继续跑
+        if (_is_paused.value) {
+            paused = false
+            _is_paused.value = false
+            val queued = steering_queue?.drain() ?: emptyList()
+            _queued_count.value = 0
+            for (q in queued) {
+                val processed_q = input_processor?.process(q) ?: q
+                on_main { messages.add(ai_message(role = ai_message_role.USER, text = processed_q)) }
+            }
+        }
         // 过 input_processor（@引用、/命令、/skill）
         val processed = input_processor?.process(text) ?: text
-        on_main { messages.add(ai_message(role = ai_message_role.USER, text = processed)) }
+        on_main {
+            messages.add(ai_message(role = ai_message_role.USER, text = processed))
+            refresh_context_usage()
+        }
         start_loop()
+    }
+
+    /**
+     * 暂停：不打断当前流式回复/工具调用，在其完成后的边界停住。
+     * 排队的 steering 消息保留，resume 时注入。
+     */
+    fun pause() {
+        if (!_is_running.value) return
+        paused = true
+        _is_paused.value = true
+    }
+
+    /**
+     * 恢复：loop 还在跑则下个边界自然继续；已停在暂停点则注入排队消息并重启循环。
+     */
+    fun resume() {
+        if (!_is_paused.value) return
+        paused = false
+        _is_paused.value = false
+        if (_is_running.value) return
+        val queued = steering_queue?.drain() ?: emptyList()
+        _queued_count.value = 0
+        for (q in queued) {
+            val processed = input_processor?.process(q) ?: q
+            on_main { messages.add(ai_message(role = ai_message_role.USER, text = processed)) }
+        }
+        val last = messages.lastOrNull()
+        val can_continue = queued.isNotEmpty() ||
+            last?.role == ai_message_role.TOOL ||
+            (last?.role == ai_message_role.ASSISTANT && last.tool_calls.isNotEmpty())
+        if (can_continue) start_loop()
     }
 
     fun cancel() {
         cancelled = true
+        paused = false
+        _is_paused.value = false
+        _queued_count.value = 0
         current_job?.cancel()
         on_main {
             _is_running.value = false
@@ -115,7 +192,11 @@ class ai_agent_loop(
     fun clear_messages() {
         if (_is_running.value) cancel()
         steering_queue?.clear()
-        on_main { messages.clear() }
+        _queued_count.value = 0
+        on_main {
+            messages.clear()
+            refresh_context_usage()
+        }
         session_store?.delete_session(session_id)
     }
 
@@ -128,22 +209,32 @@ class ai_agent_loop(
     /** 切换到指定会话：清内存 → 加载该会话历史 → 重设 session_id */
     suspend fun switch_session(new_id: String) {
         if (_is_running.value) cancel()
+        paused = false
+        _is_paused.value = false
         steering_queue?.clear()
+        _queued_count.value = 0
         session_id = new_id
         val history = session_store?.load_session(new_id) ?: emptyList()
         on_main {
             messages.clear()
             messages.addAll(history)
+            refresh_context_usage()
         }
     }
 
     /** 新建空会话：生成时间戳 id，清内存 */
     fun new_session(): String {
         if (_is_running.value) cancel()
+        paused = false
+        _is_paused.value = false
         steering_queue?.clear()
+        _queued_count.value = 0
         val new_id = "chat-" + System.currentTimeMillis()
         session_id = new_id
-        on_main { messages.clear() }
+        on_main {
+            messages.clear()
+            refresh_context_usage()
+        }
         return new_id
     }
 
@@ -205,6 +296,7 @@ class ai_agent_loop(
                     messages.removeAt(index)
                 }
             }
+            refresh_context_usage()
         }
         persist_session_via_scope()
     }
@@ -223,9 +315,21 @@ class ai_agent_loop(
             messages[index] = messages[index].copy(text = processed)
             // 删除其后所有消息
             while (messages.size > index + 1) messages.removeAt(messages.size - 1)
+            refresh_context_usage()
         }
         persist_session_via_scope()
         start_loop()
+    }
+
+    /** 手动立即压缩当前上下文（设置/徽标菜单入口） */
+    fun compact_now() {
+        if (_is_running.value || _compaction_running.value) return
+        val settings = settings_provider()
+        if (!settings.is_configured()) return
+        scope_launcher {
+            perform_compaction(settings, force = true)
+            on_main { refresh_context_usage() }
+        }
     }
 
     private fun persist_session_via_scope() {
@@ -241,35 +345,44 @@ class ai_agent_loop(
 
     private fun start_loop() {
         cancelled = false
+        // 每次用户发送/steering 续跑重新计轮次（与旧版行为一致，防单轮失控）
+        iteration_guard = 0
         _is_running.value = true
         current_job = scope_launcher { run_agent_loop() }
     }
 
     private suspend fun run_agent_loop() = withContext(Dispatchers.IO) {
         try {
-        val settings = settings_provider()
+        var settings = settings_provider()
         val env = env_provider()
-        val client = ai_client(settings)
-        var iteration = 0
 
-        while (iteration < settings.max_agent_iterations && !cancelled) {
-            iteration++
+        while (true) {
+            // 每轮重读设置：会话内切换模型即时生效（下一轮请求用新模型）
+            settings = settings_provider()
+            if (iteration_guard >= settings.max_agent_iterations || cancelled || paused) break
+            iteration_guard++
 
             val enabled_tool_names = if (settings.enable_tools) tool_registry.all().map { it.name } else emptyList()
             val system_prompt = build_full_system_prompt(env, enabled_tool_names, settings)
+            last_system_prompt_len = system_prompt.length
+
+            // 自动上下文压缩：发送前/每轮请求前检查阈值（长工具输出可能中途超限）
+            if (settings.auto_compact) {
+                perform_compaction(settings, force = false)
+            } else {
+                hard_trim_history(settings)
+            }
+            on_main { refresh_context_usage() }
+
             val history_snapshot = on_main_and_wait { messages.toList() }
             val request_messages = buildList {
                 add(ai_message(role = ai_message_role.SYSTEM, text = system_prompt))
-                addAll(history_snapshot.filter { it.role != ai_message_role.SYSTEM && !it.is_error })
+                addAll(history_snapshot.filter {
+                    it.role != ai_message_role.SYSTEM && !it.is_error && !it.is_system_notice
+                })
             }
-            // 用 compaction 替代简单截断（优先模型摘要，失败退化启发式）；
-            // 上限优先取模型级标注的上下文长度（effective_context_chars），未标注用全局值
-            val trimmed = ai_compaction.compact(
-                request_messages.filter { it.role != ai_message_role.SYSTEM },
-                settings.effective_context_chars(),
-                client = client
-            )
-            val final_messages = listOf(request_messages.first { it.role == ai_message_role.SYSTEM }) + trimmed
+            val final_messages = request_messages
+            val client = ai_client(settings)
             val tools_api = if (settings.enable_tools) tool_registry.to_api_tools() else emptyList()
 
             val assistant_msg = ai_message(role = ai_message_role.ASSISTANT, streaming = true)
@@ -323,7 +436,8 @@ class ai_agent_loop(
             val changed_files = mutableListOf<String>()
 
             for (exec in execs) {
-                if (cancelled) break
+                // 暂停/取消：不启动下一个工具（已完成的保留）
+                if (cancelled || paused) break
                 exec.status = ai_tool_status.RUNNING
                 on_main { msg_index_holder[0].let { idx -> if (idx in messages.indices) messages[idx] = update_execution(messages[idx], exec) } }
 
@@ -368,10 +482,24 @@ class ai_agent_loop(
             }
             // 持久化会话
             persist_session()
+
+            // 暂停边界：当前工具批次结束、下一轮请求前停住（保留 steering 队列）
+            if (paused && !cancelled) {
+                on_main {
+                    messages.add(ai_message(
+                        role = ai_message_role.ASSISTANT,
+                        text = "⏸ 已暂停。当前步骤已完成，排队的消息已保留。输入新消息或点击「继续」恢复。",
+                        is_system_notice = true
+                    ))
+                    _is_running.value = false
+                }
+                return@withContext
+            }
         }
 
-        // 处理 steering 队列：有排队消息则作为新 user 消息继续
-        val steering = steering_queue?.drain() ?: emptyList()
+        // 处理 steering 队列：有排队消息则作为新 user 消息继续（暂停时保留队列不处理）
+        val steering = if (paused) emptyList() else (steering_queue?.drain() ?: emptyList())
+        if (!paused) _queued_count.value = 0
         on_main { _is_running.value = false }
         if (steering.isNotEmpty() && !cancelled) {
             for (msg in steering) {
@@ -382,7 +510,7 @@ class ai_agent_loop(
             return@withContext
         }
 
-        if (iteration >= settings.max_agent_iterations && !cancelled) {
+        if (iteration_guard >= settings.max_agent_iterations && !cancelled) {
             on_main {
                 messages.add(ai_message(
                     role = ai_message_role.ASSISTANT,
@@ -391,6 +519,7 @@ class ai_agent_loop(
             }
         }
         persist_session()
+        on_main { refresh_context_usage() }
         } catch (e: Throwable) {
             // 捕获 loop 内任何异常，显示到对话里（避免静默失败）
             val err_text = "⚠️ agent loop 异常: ${e.javaClass.simpleName}: ${e.message ?: ""}"
@@ -399,8 +528,79 @@ class ai_agent_loop(
                 _is_running.value = false
             }
         } finally {
-            on_main { _is_running.value = false }
+            on_main {
+                _is_running.value = false
+                refresh_context_usage()
+            }
         }
+    }
+
+    /** 循环轮次计数（每次发送/续跑由 start_loop 重置，防单次任务失控） */
+    private var iteration_guard = 0
+
+    /**
+     * 自动/手动压缩：阈值触发（或 force）时把旧消息摘要成 checkpoint 并回写 messages。
+     * 回写后摘要消息带 is_summary 标记（UI 折叠卡片），并立即持久化。
+     * @return 是否执行了压缩
+     */
+    private suspend fun perform_compaction(settings: ai_settings_state, force: Boolean): Boolean {
+        val limit_chars = settings.effective_context_chars()
+        val used_chars = on_main_and_wait {
+            last_system_prompt_len + messages.sumOf { it.estimated_chars().toLong() }
+        }
+        if (!force && !ai_compaction.should_compact(used_chars, limit_chars, settings.compact_threshold_percent)) {
+            return false
+        }
+        // 近期保留量：上限的 20%，至少 8000 字符（参考 pi keepRecentTokens=20K/200K 的比例）
+        val keep_recent = (limit_chars * 0.2f).toInt().coerceAtLeast(8_000)
+        // 已有摘要 → 增量合并模式
+        val prev_summary = on_main_and_wait { messages.firstOrNull { it.is_summary }?.text }
+
+        _compaction_running.value = true
+        try {
+            val snapshot = on_main_and_wait { messages.toList() }
+            val result = ai_compaction.compact(snapshot, keep_recent, ai_client(settings), prev_summary)
+            if (result == null) return false
+            // 回写：[新摘要] + 保留的近期消息
+            on_main {
+                val kept = messages.drop(result.compacted_count)
+                messages.clear()
+                messages.add(result.summary_message)
+                messages.addAll(kept)
+            }
+            persist_session()
+            return true
+        } finally {
+            _compaction_running.value = false
+        }
+    }
+
+    /**
+     * 兜底截断（自动压缩关闭时）：超出上限就从最老的消息开始丢弃（不生成摘要）。
+     * 切点复用压缩的边界规则，避免拆散 assistant/tool 配对。
+     */
+    private suspend fun hard_trim_history(settings: ai_settings_state) {
+        val limit_chars = settings.effective_context_chars()
+        val used_chars = on_main_and_wait { messages.sumOf { it.estimated_chars().toLong() } }
+        if (used_chars <= limit_chars) return
+        // 保留近期约 60% 上限
+        val keep_recent = (limit_chars * 0.6f).toInt()
+        val snapshot = on_main_and_wait { messages.toList() }
+        val cut = ai_compaction.find_cut_point(snapshot, keep_recent)
+        if (cut <= 0) return
+        on_main {
+            val kept = messages.drop(cut)
+            messages.clear()
+            messages.addAll(kept)
+        }
+    }
+
+    /** 估算上下文用量并更新 StateFlow（主线程调用；徽标/压缩判断的数据源） */
+    private fun refresh_context_usage() {
+        val settings = settings_provider()
+        val limit = settings.effective_context_chars().toLong().coerceAtLeast(1)
+        val used = last_system_prompt_len + messages.sumOf { it.estimated_chars().toLong() }
+        _context_usage.value = (used.toFloat() / limit).coerceIn(0f, 1.5f)
     }
 
     /** 构建完整 system prompt：基础 + AGENTS.md + skill 索引 + 用户自定义提示词 */

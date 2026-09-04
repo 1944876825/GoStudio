@@ -10,6 +10,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -34,113 +35,331 @@ import com.jmwl.gostudio.ai.ai_tool_status
 import com.jmwl.gostudio.ui.theme.app_theme_provider
 
 /**
- * 提供商/模型选择器：展示当前会话生效的模型，点击弹出切换菜单。
- * 没有任何已配置供应商时，点击直接跳设置页。
+ * 提供商/模型选择器：顶部 pill（当前模型名 + 上下文用量徽标），点击弹出
+ * 底部模型切换面板（搜索过滤 + 按实例分组 + 能力徽标）。
+ * 没有任何已配置实例时，点击直接跳设置页。
+ * 切换下一轮请求即生效（agent loop 每轮通过 settings_provider 重读设置）。
+ *
+ * @param current_choice 当前会话生效的模型选择（完整连接快照）
+ * @param instances 已配置的提供商实例列表（面板数据源）
+ * @param agent_running agent 是否运行中（提示「下一轮生效」）
+ * @param context_usage 估算上下文用量 0..1+（徽标显示，超阈值变色）
+ * @param on_context_badge_click 用量徽标点击（打开用量详情/压缩菜单）
  */
 @Composable
 fun ai_model_selector(
-    current_provider: ai_provider,
-    current_model: String,
-    available_models: Map<ai_provider, List<String>>,
-    configured_providers: Set<ai_provider>,
-    on_session_model_change: (ai_provider, String) -> Unit,
+    current_choice: com.jmwl.gostudio.ai.ai_model_choice,
+    instances: List<com.jmwl.gostudio.ai.provider_instance>,
+    on_choice: (com.jmwl.gostudio.ai.ai_model_choice) -> Unit,
     on_open_settings: () -> Unit,
+    agent_running: Boolean = false,
+    context_usage: Float = 0f,
+    on_context_badge_click: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val colors = app_theme_provider.colors
-    var model_menu_open by remember { mutableStateOf(false) }
+    var sheet_open by remember { mutableStateOf(false) }
+    val has_any_configured = instances.any { it.is_ready }
 
-    Box(modifier = modifier) {
-        val has_any_configured = configured_providers.isNotEmpty()
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .clickable {
-                    if (has_any_configured) model_menu_open = true else on_open_settings()
-                }
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // 参考图：单行粗体模型名 + 下拉箭头
-            Text(
-                text = when {
-                    !has_any_configured -> "未配置 AI"
-                    current_model.isNotBlank() -> current_model
-                    else -> current_provider.display_name
-                },
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (has_any_configured) colors.title_large else colors.danger,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false)
-            )
-            if (has_any_configured) {
-                Icon(Icons.Default.ArrowDropDown, contentDescription = "切换模型", tint = colors.subtitle, modifier = Modifier.size(20.dp))
-            } else {
-                Spacer(modifier = Modifier.width(4.dp))
-                Icon(Icons.Default.Settings, contentDescription = "去设置", tint = colors.subtitle, modifier = Modifier.size(15.dp))
-            }
+    Row(
+        modifier = modifier.clip(RoundedCornerShape(10.dp)).clickable {
+            if (has_any_configured) sheet_open = true else on_open_settings()
+        }.padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = current_choice.model.ifBlank { current_choice.label.ifBlank { "未配置 AI" } },
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (has_any_configured) colors.title_large else colors.danger,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false)
+        )
+        if (has_any_configured) {
+            ai_context_usage_badge(usage = context_usage, on_click = on_context_badge_click)
+            Icon(Icons.Default.ArrowDropDown, contentDescription = "切换模型", tint = colors.subtitle, modifier = Modifier.size(20.dp))
+        } else {
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(Icons.Default.Settings, contentDescription = "去设置", tint = colors.subtitle, modifier = Modifier.size(15.dp))
         }
-        DropdownMenu(
-            expanded = model_menu_open,
-            onDismissRequest = { model_menu_open = false }
-        ) {
-            // 只显示已配置 key 的供应商
-            val visible_providers = ai_provider.entries.filter { it in configured_providers }
-            if (visible_providers.isEmpty()) {
-                DropdownMenuItem(
-                    text = { Text("暂无已配置的供应商，去设置？", color = colors.subtitle, fontSize = 12.sp) },
-                    onClick = { model_menu_open = false; on_open_settings() }
+    }
+
+    if (sheet_open) {
+        ai_model_selector_sheet(
+            current_choice = current_choice,
+            instances = instances,
+            agent_running = agent_running,
+            on_choice = {
+                on_choice(it)
+                sheet_open = false
+            },
+            on_open_settings = {
+                sheet_open = false
+                on_open_settings()
+            },
+            on_dismiss = { sheet_open = false }
+        )
+    }
+}
+
+/**
+ * 上下文用量徽标：显示估算百分比，健康时低调灰、≥80% 黄、≥95% 红。
+ * 点击展开用量菜单（查看详情/立即压缩）。
+ */
+@Composable
+fun ai_context_usage_badge(usage: Float, on_click: (() -> Unit)? = null) {
+    val colors = app_theme_provider.colors
+    val percent = (usage * 100).toInt().coerceIn(0, 999)
+    val tint = when {
+        usage >= 0.95f -> colors.danger
+        usage >= 0.8f -> colors.warning
+        else -> colors.subtitle.copy(alpha = 0.8f)
+    }
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(tint.copy(alpha = 0.12f))
+            .then(if (on_click != null) Modifier.clickable { on_click() } else Modifier)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        Icon(
+            Icons.Default.DataUsage,
+            contentDescription = "上下文用量",
+            tint = tint,
+            modifier = Modifier.size(11.dp)
+        )
+        Text(
+            text = "$percent%",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            color = tint
+        )
+    }
+}
+
+/** 模型选择面板数据：实例 + 该实例的可选模型 */
+private data class ai_model_group(
+    val instance: com.jmwl.gostudio.ai.provider_instance,
+    val models: List<String>
+)
+
+/**
+ * 底部模型切换面板：搜索过滤 + 按提供商实例分组 + 能力徽标 + 当前高亮。
+ * 参考 pi 的 model selector（模糊搜索 + provider 前缀匹配）。
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun ai_model_selector_sheet(
+    current_choice: com.jmwl.gostudio.ai.ai_model_choice,
+    instances: List<com.jmwl.gostudio.ai.provider_instance>,
+    agent_running: Boolean,
+    on_choice: (com.jmwl.gostudio.ai.ai_model_choice) -> Unit,
+    on_open_settings: () -> Unit,
+    on_dismiss: () -> Unit
+) {
+    val colors = app_theme_provider.colors
+    var query by remember { mutableStateOf("") }
+
+    // 只显示配置完整的实例；每个实例的可选模型 = 拉取缓存 + 预置列表去重
+    val groups = remember(instances) {
+        instances.filter { it.is_ready }.map { inst ->
+            ai_model_group(instance = inst, models = inst.selectable_models())
+        }
+    }
+    val filtered = remember(groups, query) {
+        if (query.isBlank()) groups
+        else groups.map { g ->
+            g.copy(models = g.models.filter {
+                it.contains(query, ignoreCase = true) ||
+                    g.instance.label.contains(query, ignoreCase = true) ||
+                    g.instance.provider.display_name.contains(query, ignoreCase = true)
+            })
+        }.filter { it.models.isNotEmpty() || it.instance.label.contains(query, ignoreCase = true) }
+    }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = on_dismiss,
+        containerColor = colors.gradient_start,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).navigationBarsPadding()) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "切换模型",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.title_large,
+                    modifier = Modifier.weight(1f)
                 )
-            } else {
-                visible_providers.forEach { p ->
-                    val models = (available_models[p] ?: emptyList()) + p.default_models
-                    val deduped = models.distinct()
-                    if (deduped.isNotEmpty()) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    p.display_name,
-                                    color = if (p == current_provider) colors.title_highlight else colors.dialog_text,
-                                    fontWeight = if (p == current_provider) FontWeight.Bold else FontWeight.Normal,
-                                    fontSize = 13.sp
-                                )
-                            },
-                            onClick = {
-                                on_session_model_change(p, p.default_model.ifBlank { current_model })
-                                model_menu_open = false
-                            }
-                        )
-                        deduped.forEach { m ->
-                            DropdownMenuItem(
-                                text = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Spacer(modifier = Modifier.width(16.dp))
-                                        Text(
-                                            m,
-                                            color = if (p == current_provider && m == current_model) colors.title_highlight else colors.subtitle,
-                                            fontSize = 12.sp,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        if (p == current_provider && m == current_model) {
-                                            Icon(Icons.Default.Check, contentDescription = null, tint = colors.title_highlight, modifier = Modifier.size(14.dp))
-                                        }
-                                    }
-                                },
-                                onClick = {
-                                    on_session_model_change(p, m)
-                                    model_menu_open = false
-                                }
-                            )
+                TextButton(onClick = on_open_settings) {
+                    Text("管理提供商", fontSize = 12.sp, color = colors.title_highlight)
+                }
+            }
+            // 搜索框
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                placeholder = { Text("搜索模型或提供商…", fontSize = 13.sp, color = colors.input_hint) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = colors.subtitle, modifier = Modifier.size(17.dp)) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = "" }, modifier = Modifier.size(26.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "清空", tint = colors.subtitle, modifier = Modifier.size(15.dp))
                         }
-                        HorizontalDivider(color = colors.input_border.copy(alpha = 0.2f))
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = colors.input_text),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = colors.title_highlight,
+                    unfocusedBorderColor = colors.input_border,
+                    cursorColor = colors.title_highlight,
+                    focusedContainerColor = colors.card_bg,
+                    unfocusedContainerColor = colors.card_bg
+                )
+            )
+            // 运行中提示：切换下一轮生效
+            if (agent_running) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(colors.warning_bg.copy(alpha = 0.5f))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Default.Info, contentDescription = null, tint = colors.warning, modifier = Modifier.size(13.dp))
+                    Text(
+                        "Agent 运行中，切换将在下一轮请求生效",
+                        fontSize = 11.sp, color = colors.warning
+                    )
+                }
+            }
+            // 分组模型列表
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(max = 420.dp),
+                contentPadding = PaddingValues(vertical = 6.dp)
+            ) {
+                if (filtered.isEmpty()) {
+                    item {
+                        Text(
+                            "没有匹配的模型",
+                            fontSize = 12.sp, color = colors.subtitle,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp).wrapContentWidth(Alignment.CenterHorizontally)
+                        )
+                    }
+                }
+                filtered.forEach { group ->
+                    item(key = "group-${group.instance.id}") {
+                        Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Box(
+                                    modifier = Modifier.size(7.dp).background(
+                                        color = if (group.instance.is_ready) colors.success else colors.subtitle,
+                                        shape = androidx.compose.foundation.shape.CircleShape
+                                    )
+                                )
+                                Text(
+                                    group.instance.label.ifBlank { group.instance.provider.display_name },
+                                    fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                                    color = colors.card_text_title
+                                )
+                                Text(
+                                    host_of(group.instance.base_url),
+                                    fontSize = 10.sp, color = colors.subtitle,
+                                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                    items(group.models.size, key = { i -> "m-${group.instance.id}-${group.models[i]}" }) { i ->
+                        val model = group.models[i]
+                        val selected = group.instance.provider == current_choice.provider &&
+                            model == current_choice.model && group.instance.base_url == current_choice.base_url
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    on_choice(
+                                        com.jmwl.gostudio.ai.ai_model_choice(
+                                            provider = group.instance.provider,
+                                            model = model,
+                                            base_url = group.instance.base_url,
+                                            api_key = group.instance.api_key,
+                                            label = group.instance.label
+                                        )
+                                    )
+                                }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                model,
+                                fontSize = 13.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = if (selected) colors.title_highlight else colors.card_text_title,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                            // 能力徽标：上下文长度 + 多模态
+                            group.instance.model_caps[model]?.let { caps ->
+                                if (caps.context_tokens > 0) {
+                                    ai_model_cap_chip(text = format_token_count(caps.context_tokens))
+                                }
+                                if (caps.is_multimodal) {
+                                    ai_model_cap_chip(text = "多模态")
+                                }
+                            }
+                            if (selected) {
+                                Icon(Icons.Default.Check, contentDescription = "当前模型", tint = colors.title_highlight, modifier = Modifier.size(16.dp))
+                            }
+                        }
                     }
                 }
             }
+            Spacer(Modifier.height(12.dp))
         }
     }
+}
+
+/** 能力徽标 chip（上下文长度/多模态） */
+@Composable
+private fun ai_model_cap_chip(text: String) {
+    val colors = app_theme_provider.colors
+    Text(
+        text = text,
+        fontSize = 9.sp,
+        color = colors.subtitle,
+        modifier = Modifier
+            .clip(RoundedCornerShape(5.dp))
+            .background(colors.editor_bg.copy(alpha = 0.5f))
+            .padding(horizontal = 5.dp, vertical = 2.dp)
+    )
+}
+
+/** base_url → host（组头展示），解析失败返回原串 */
+private fun host_of(base_url: String): String = runCatching {
+    java.net.URI(base_url.trim()).host ?: base_url
+}.getOrDefault(base_url)
+
+/** token 数 → 简短展示（如 128K / 1M） */
+internal fun format_token_count(tokens: Long): String = when {
+    tokens >= 1_000_000 -> {
+        val m = tokens / 1_000_000.0
+        if (m >= 10) "${m.toInt()}M" else String.format(java.util.Locale.US, "%.1fM", m)
+    }
+    tokens >= 1_000 -> "${(tokens / 1_000)}K"
+    else -> tokens.toString()
 }
 
 /**
@@ -167,6 +386,17 @@ fun ai_message_bubble(
         // 流式占位（还没收到首个 token）也要显示气泡，承载「思考中」加载动画
         message.streaming
     if (!has_visible) return
+
+    // 压缩摘要消息：折叠卡片（参考 pi 的 compaction summary message）
+    if (message.is_summary) {
+        ai_summary_card(message)
+        return
+    }
+    // 系统通知（暂停提示等）：弱化的居中提示条，不带气泡
+    if (message.is_system_notice) {
+        ai_system_notice(message.text)
+        return
+    }
 
     val colors = app_theme_provider.colors
     val is_user = message.role == ai_message_role.USER
@@ -417,6 +647,217 @@ fun ai_waiting_bubble() {
             Column(modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp)) {
                 ai_thinking_indicator()
             }
+        }
+    }
+}
+
+/**
+ * 上下文压缩摘要卡片（参考 pi 的 CompactionSummaryMessageComponent）。
+ * 折叠时一行「已压缩 N 条消息 · 约 X tokens」；点击展开 Markdown 摘要。
+ */
+@Composable
+fun ai_summary_card(message: ai_message) {
+    val colors = app_theme_provider.colors
+    var expanded by remember(message.timestamp) { mutableStateOf(false) }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 3.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable { expanded = !expanded },
+        color = colors.dialog_clone_bg.copy(alpha = 0.6f)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(
+                    Icons.Default.Compress,
+                    contentDescription = null,
+                    tint = colors.subtitle,
+                    modifier = Modifier.size(14.dp)
+                )
+                Text(
+                    text = "已压缩 ${message.summary_origin_count} 条消息" +
+                        (if (message.summary_tokens_before > 0) " · 约 ${format_token_count(message.summary_tokens_before)} tokens" else ""),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.subtitle,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "收起摘要" else "展开摘要",
+                    tint = colors.subtitle,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            AnimatedVisibility(visible = expanded, enter = expandVertically(), exit = shrinkVertically()) {
+                Column(modifier = Modifier.padding(top = 6.dp)) {
+                    ai_markdown_text(
+                        text = message.text,
+                        color = colors.card_text_subtitle,
+                        streaming = false
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 系统通知（暂停提示等）：弱化的居中提示条，不参与长按菜单。
+ */
+@Composable
+fun ai_system_notice(text: String) {
+    val colors = app_theme_provider.colors
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(colors.warning_bg.copy(alpha = 0.35f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Icon(
+            Icons.Default.PauseCircle,
+            contentDescription = null,
+            tint = colors.warning,
+            modifier = Modifier.size(13.dp)
+        )
+        Text(text = text, fontSize = 11.sp, color = colors.subtitle)
+    }
+}
+
+/**
+ * 暂停横幅：agent 处于暂停态时显示在输入区上方，点击「继续」恢复。
+ */
+@Composable
+fun ai_pause_banner(queued_count: Int = 0, on_resume: () -> Unit) {
+    val colors = app_theme_provider.colors
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = colors.warning_bg.copy(alpha = 0.5f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(Icons.Default.PauseCircle, contentDescription = null, tint = colors.warning, modifier = Modifier.size(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("已暂停", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = colors.card_text_title)
+                Text(
+                    text = if (queued_count > 0) "已排队 $queued_count 条消息，恢复后发送" else "当前步骤已完成，输入消息或点继续",
+                    fontSize = 10.5.sp, color = colors.subtitle
+                )
+            }
+            TextButton(onClick = on_resume) {
+                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = colors.title_highlight, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(2.dp))
+                Text("继续", fontSize = 13.sp, color = colors.title_highlight)
+            }
+        }
+    }
+}
+
+/**
+ * 上下文压缩进行中指示器：消息流末尾显示（压缩要调一次模型，可能数秒）。
+ */
+@Composable
+fun ai_compacting_indicator() {
+    val colors = app_theme_provider.colors
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "compacting")
+    val dots by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 3f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(1200, easing = androidx.compose.animation.core.LinearEasing)
+        ),
+        label = "compact-dots"
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(colors.dialog_clone_bg.copy(alpha = 0.5f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(13.dp),
+            strokeWidth = 1.5.dp,
+            color = colors.title_highlight,
+            trackColor = colors.title_highlight.copy(alpha = 0.15f)
+        )
+        Text(
+            text = "上下文接近上限，正在压缩历史消息" + ".".repeat((dots.toInt() % 3) + 1),
+            fontSize = 11.sp,
+            color = colors.subtitle
+        )
+    }
+}
+
+/**
+ * 上下文用量详情弹层：徽标点击打开，展示用量/上限和「立即压缩」入口。
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun ai_context_usage_sheet(
+    usage: Float,
+    limit_chars: Int,
+    on_compact_now: () -> Unit,
+    on_dismiss: () -> Unit
+) {
+    val colors = app_theme_provider.colors
+    val percent = (usage * 100).toInt().coerceIn(0, 999)
+    val used_chars = (usage * limit_chars).toLong()
+    val used_tokens = used_chars / 4
+    val limit_tokens = limit_chars.toLong() / 4
+    val tint = when {
+        usage >= 0.95f -> colors.danger
+        usage >= 0.8f -> colors.warning
+        else -> colors.success
+    }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = on_dismiss,
+        containerColor = colors.gradient_start,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("上下文用量", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = colors.title_large)
+            // 用量条
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { usage.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                    color = tint,
+                    trackColor = colors.input_border.copy(alpha = 0.3f)
+                )
+                Text(
+                    text = "约 ${format_token_count(used_tokens)} / ${format_token_count(limit_tokens)} tokens（$percent%）",
+                    fontSize = 12.sp, color = colors.subtitle
+                )
+            }
+            Text(
+                text = "超过阈值（默认 80%）时会自动把较早的对话压缩成一份结构化摘要，保留最近的消息原文，以继续长会话。",
+                fontSize = 11.5.sp, lineHeight = 16.sp, color = colors.subtitle
+            )
+            Button(
+                onClick = {
+                    on_compact_now()
+                    on_dismiss()
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = colors.title_highlight)
+            ) {
+                Icon(Icons.Default.Compress, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("立即压缩", fontSize = 13.sp)
+            }
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
