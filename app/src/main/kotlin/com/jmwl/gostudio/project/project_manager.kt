@@ -878,8 +878,20 @@ func main() {
             name = config.name,
             path = project_dir.absolutePath,
             go_version = config.go_version,
-            template = config.template
+            template = config.template,
+            app_icon_path = resolve_app_icon_path(project_dir, config)
         )
+    }
+
+    /** App 界面项目的图标文件（配置的 icon_path 落到项目目录），不存在则空串。 */
+    private fun resolve_app_icon_path(project_dir: File, config: project_config): String {
+        if (config.template != "app-ui") return ""
+        return config.app.icon_path
+            .takeIf { it.isNotBlank() }
+            ?.let { File(project_dir, it) }
+            ?.takeIf { it.isFile }
+            ?.absolutePath
+            .orEmpty()
     }
 
     suspend fun get_recent_projects(): List<recent_project_info> = withContext(Dispatchers.IO) {
@@ -1031,6 +1043,7 @@ func main() {
             path = record.path,
             go_version = project_info?.go_version ?: record.go_version,
             template = project_info?.template ?: record.template.ifBlank { "hello" },
+            app_icon_path = project_info?.app_icon_path.orEmpty(),
             last_opened = format_last_opened(record.opened_at),
             opened_at = record.opened_at
         )
@@ -1058,7 +1071,8 @@ data class project_info(
     val name: String,
     val path: String,
     val go_version: String,
-    val template: String
+    val template: String,
+    val app_icon_path: String = ""
 )
 
 data class project_build_config(
@@ -1100,6 +1114,7 @@ data class recent_project_info(
     val path: String,
     val go_version: String,
     val template: String,
+    val app_icon_path: String = "",
     val last_opened: String,
     val opened_at: Long
 )

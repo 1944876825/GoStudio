@@ -86,9 +86,12 @@ data class provider_instance(
         else -> api_key.take(6) + "…" + api_key.takeLast(4)
     }
 
-    /** 模型选择候选：拉取列表 + 类型预置列表去重，排除隐藏 */
+    /** 全量模型列表（拉取 + 预置，含已隐藏项）：详情页展示与「恢复隐藏」用 */
+    fun all_models(): List<String> = (models + provider.default_models).distinct()
+
+    /** 模型选择候选：全量列表排除隐藏 */
     fun selectable_models(): List<String> =
-        (models + provider.default_models).distinct().filter { it !in hidden_models }
+        all_models().filter { it !in hidden_models }
 
     /** 已配置且启用（列表行的状态点） */
     val is_ready: Boolean get() = enabled && base_url.isNotBlank() && model.isNotBlank() && api_key.isNotBlank()

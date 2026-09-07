@@ -46,12 +46,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -87,15 +90,18 @@ fun parse_markdown(text: String): List<ai_md_block> {
     while (i < lines.size) {
         val line = lines[i]
 
-        // 1. 代码围栏 ```lang
-        val fenceMatch = Regex("^(`{3,})(\\w*)\\s*$").find(line.trim())
+        // 1. 代码围栏 ```lang（info string 允许任意非反引号字符：
+        //    兼容 ```c++ / ```c# / ```go 标题 等写法，语言取首词）
+        val fenceMatch = Regex("^(`{3,})([^`]*)$").find(line.trim())
         if (fenceMatch != null) {
             val fence = fenceMatch.groupValues[1]
-            val lang = fenceMatch.groupValues[2]
+            val lang = fenceMatch.groupValues[2].trim().substringBefore(' ').trim().take(16)
             val codeLines = mutableListOf<String>()
             i++
             while (i < lines.size) {
-                if (lines[i].trim().startsWith(fence) && Regex("^`{3,}\\s*$").matches(lines[i].trim())) {
+                val closeMatch = Regex("^(`{3,})\\s*$").find(lines[i].trim())
+                // 闭合围栏：只含反引号且长度不小于开栏（嵌套 4 反引栏不会误闭合）
+                if (closeMatch != null && closeMatch.groupValues[1].length >= fence.length) {
                     i++
                     break
                 }
@@ -175,23 +181,32 @@ fun parse_markdown(text: String): List<ai_md_block> {
             continue
         }
 
-        // 8. 段落：连续非空行合并
+        // 8. 段落：连续非空行合并（保留换行：聊天场景下模型的硬换行有意义，
+        //    合并成空格会把目录列表/松散多行文本压成一坨）
         val paraLines = mutableListOf<String>()
-        while (i < lines.size && lines[i].isNotBlank() &&
-            !Regex("^(`{3,})").containsMatchIn(lines[i].trim()) &&
-            !Regex("^#{1,6}\\s").containsMatchIn(lines[i]) &&
-            !lines[i].trimStart().startsWith(">") &&
-            list_item_match(lines[i]) == null &&
-            !Regex("^([-*_])\\1{2,}\\s*$").matches(lines[i].trim())
-        ) {
+        while (i < lines.size && lines[i].isNotBlank() && !is_paragraph_boundary(lines[i])) {
             paraLines.add(lines[i])
             i++
         }
-        if (paraLines.isNotEmpty()) {
-            blocks.add(ai_md_block.Paragraph(paraLines.joinToString(" ")))
+        if (paraLines.isEmpty()) {
+            // 兜底：以 ``` 开头但没被识别为开栏的行（如行内围栏 ```code```），
+            // 不消费会导致主循环死循环（主线程 ANR），按普通文本吃掉
+            paraLines.add(lines[i])
+            i++
         }
+        blocks.add(ai_md_block.Paragraph(paraLines.joinToString("\n")))
     }
     return blocks
+}
+
+/** 段落收集的终止边界：代码围栏/标题/引用/列表/分隔线 */
+private fun is_paragraph_boundary(line: String): Boolean {
+    val trimmed = line.trim()
+    return Regex("^`{3,}").containsMatchIn(trimmed) ||
+        Regex("^#{1,6}\\s").containsMatchIn(line) ||
+        line.trimStart().startsWith(">") ||
+        list_item_match(line) != null ||
+        Regex("^([-*_])\\1{2,}\\s*$").matches(trimmed)
 }
 
 /** 匹配列表项，返回 (序号 or null, 内容) */
@@ -214,8 +229,9 @@ private fun split_table_row(line: String): List<String> {
 
 /**
  * 把一段行内文本（可能含 **粗** *斜* `code` [t](u) ~~del~~）渲染成 AnnotatedString。
+ * 链接用 [androidx.compose.ui.text.LinkAnnotation.Url] 标注，Text 自动处理点击打开。
  */
-fun render_inline(text: String, base: SpanStyle): AnnotatedString = buildAnnotatedString {
+fun render_inline(text: String, base: SpanStyle, link_color: Color = Color.Unspecified): AnnotatedString = buildAnnotatedString {
     var pos = 0
     while (pos < text.length) {
         // 行内代码 `...`
@@ -256,21 +272,31 @@ fun render_inline(text: String, base: SpanStyle): AnnotatedString = buildAnnotat
                 continue
             }
         }
-        // 链接 [text](url)
+        // 链接 [text](url)：只认 http(s)/mailto，防 javascript: 等伪协议
         if (text[pos] == '[') {
             val textEnd = text.indexOf(']', pos + 1)
             if (textEnd > pos && text.getOrNull(textEnd + 1) == '(') {
                 val urlEnd = text.indexOf(')', textEnd + 2)
                 if (urlEnd > textEnd) {
-                    val linkText = text.substring(pos + 1, textEnd)
                     val url = text.substring(textEnd + 2, urlEnd)
-                    pushStringAnnotation(tag = "URL", annotation = url)
-                    withStyle(base.copy(color = base.color, textDecoration = TextDecoration.Underline)) {
-                        append(linkText)
+                    if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("mailto:")) {
+                        val linkText = text.substring(pos + 1, textEnd)
+                        withLink(
+                            LinkAnnotation.Url(
+                                url = url,
+                                styles = TextLinkStyles(
+                                    style = base.copy(
+                                        color = if (link_color == Color.Unspecified) base.color else link_color,
+                                        textDecoration = TextDecoration.Underline
+                                    )
+                                )
+                            )
+                        ) {
+                            append(linkText)
+                        }
+                        pos = urlEnd + 1
+                        continue
                     }
-                    pop()
-                    pos = urlEnd + 1
-                    continue
                 }
             }
         }
@@ -317,14 +343,14 @@ fun ai_markdown_text(
                         else -> 13.sp to FontWeight.Medium
                     }
                     Text(
-                        text = render_inline(block.text, SpanStyle(color = color, fontSize = size, fontWeight = weight)),
+                        text = render_inline(block.text, SpanStyle(color = color, fontSize = size, fontWeight = weight), colors.title_highlight),
                         fontSize = size,
                         modifier = Modifier.padding(vertical = 3.dp)
                     )
                 }
                 is ai_md_block.Paragraph -> {
                     Text(
-                        text = render_inline(block.text, SpanStyle(color = color, fontSize = 13.sp)),
+                        text = render_inline(block.text, SpanStyle(color = color, fontSize = 13.sp), colors.title_highlight),
                         fontSize = 13.sp,
                         lineHeight = 19.sp,
                         modifier = Modifier.padding(vertical = 2.dp)
@@ -344,7 +370,7 @@ fun ai_markdown_text(
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                text = render_inline(block.text, SpanStyle(color = colors.subtitle, fontSize = 12.sp)),
+                                text = render_inline(block.text, SpanStyle(color = colors.subtitle, fontSize = 12.sp), colors.title_highlight),
                                 fontSize = 12.sp,
                                 lineHeight = 17.sp
                             )
@@ -370,7 +396,7 @@ fun ai_markdown_text(
                                     fontSize = 13.sp
                                 )
                                 Text(
-                                    text = render_inline(item.text, SpanStyle(color = color, fontSize = 13.sp)),
+                                    text = render_inline(item.text, SpanStyle(color = color, fontSize = 13.sp), colors.title_highlight),
                                     fontSize = 13.sp,
                                     lineHeight = 18.sp,
                                     modifier = Modifier.weight(1f)

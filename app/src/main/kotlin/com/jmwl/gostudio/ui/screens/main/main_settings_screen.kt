@@ -34,6 +34,7 @@ fun main_settings_screen(
     on_ai_click: () -> Unit = {},
     on_git_click: () -> Unit = {},
     on_about_click: () -> Unit = {},
+    on_feedback_click: () -> Unit = {},
     on_tools_click: () -> Unit = {},
     on_plugins_click: () -> Unit = {}
 ) {
@@ -49,6 +50,7 @@ fun main_settings_screen(
             on_ai_click = on_ai_click,
             on_git_click = on_git_click,
             on_about_click = on_about_click,
+            on_feedback_click = on_feedback_click,
             on_tools_click = on_tools_click,
             on_plugins_click = on_plugins_click,
             show_title = false,
@@ -70,6 +72,7 @@ fun main_settings_content(
     on_ai_click: () -> Unit = {},
     on_git_click: () -> Unit = {},
     on_about_click: () -> Unit = {},
+    on_feedback_click: () -> Unit = {},
     on_tools_click: () -> Unit = {},
     on_plugins_click: () -> Unit = {},
     show_title: Boolean = true,
@@ -261,6 +264,16 @@ fun main_settings_content(
                 colors = colors,
                 onClick = { start_update_check() },
                 is_top = true,
+                is_bottom = false
+            )
+            Spacer(modifier = Modifier.height(1.dp))
+            main_settings_card_item(
+                icon = Icons.Default.BugReport,
+                title = "问题反馈",
+                subtitle = "查看本设备的错误上报记录与处理状态",
+                colors = colors,
+                onClick = on_feedback_click,
+                is_top = false,
                 is_bottom = false
             )
             Spacer(modifier = Modifier.height(1.dp))

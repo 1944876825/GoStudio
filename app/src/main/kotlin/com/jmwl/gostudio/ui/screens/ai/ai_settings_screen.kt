@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.DarkMode
@@ -49,6 +50,7 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Terminal
@@ -58,6 +60,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Waves
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -65,8 +68,13 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -80,17 +88,23 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -110,9 +124,12 @@ import com.jmwl.gostudio.ai.with_instance
 import com.jmwl.gostudio.ai.without_instance
 import com.jmwl.gostudio.ui.toast.app_toast
 import com.jmwl.gostudio.ui.theme.app_colors
+import com.jmwl.gostudio.ui.theme.motion
 import com.jmwl.gostudio.ui.components.sub_page_top_bar
 import com.jmwl.gostudio.ui.theme.app_theme_provider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -216,10 +233,10 @@ fun ai_settings_screen(
         sub_page?.let { page ->
             androidx.compose.animation.AnimatedVisibility(
                 visible = true,
-                enter = androidx.compose.animation.slideInHorizontally(initialOffsetX = { it }) +
-                    androidx.compose.animation.fadeIn(),
-                exit = androidx.compose.animation.slideOutHorizontally(targetOffsetX = { it }) +
-                    androidx.compose.animation.fadeOut()
+                enter = androidx.compose.animation.slideInHorizontally(tween(motion.BASE, easing = motion.quiet), initialOffsetX = { it }) +
+                    androidx.compose.animation.fadeIn(tween(motion.BASE, easing = motion.soft)),
+                exit = androidx.compose.animation.slideOutHorizontally(tween(motion.BASE, easing = motion.quiet), targetOffsetX = { it }) +
+                    androidx.compose.animation.fadeOut(tween(motion.BASE, easing = motion.soft))
             ) {
                 Box(
                     modifier = Modifier
@@ -393,10 +410,10 @@ private fun ai_model_settings_screen(
             settings.instances.firstOrNull { it.id == id }?.let { inst ->
                 androidx.compose.animation.AnimatedVisibility(
                     visible = true,
-                    enter = androidx.compose.animation.slideInHorizontally(initialOffsetX = { it }) +
-                        androidx.compose.animation.fadeIn(),
-                    exit = androidx.compose.animation.slideOutHorizontally(targetOffsetX = { it }) +
-                        androidx.compose.animation.fadeOut()
+                    enter = androidx.compose.animation.slideInHorizontally(tween(motion.BASE, easing = motion.quiet), initialOffsetX = { it }) +
+                        androidx.compose.animation.fadeIn(tween(motion.BASE, easing = motion.soft)),
+                    exit = androidx.compose.animation.slideOutHorizontally(tween(motion.BASE, easing = motion.quiet), targetOffsetX = { it }) +
+                        androidx.compose.animation.fadeOut(tween(motion.BASE, easing = motion.soft))
                 ) {
                     Box(modifier = Modifier.fillMaxSize().background(colors.editor_bg)) {
                         ai_provider_detail_screen(
@@ -415,10 +432,10 @@ private fun ai_model_settings_screen(
         // 三步添加向导覆盖层
         androidx.compose.animation.AnimatedVisibility(
             visible = add_open,
-            enter = androidx.compose.animation.slideInHorizontally(initialOffsetX = { it }) +
-                androidx.compose.animation.fadeIn(),
-            exit = androidx.compose.animation.slideOutHorizontally(targetOffsetX = { it }) +
-                androidx.compose.animation.fadeOut()
+            enter = androidx.compose.animation.slideInHorizontally(tween(motion.BASE, easing = motion.quiet), initialOffsetX = { it }) +
+                androidx.compose.animation.fadeIn(tween(motion.BASE, easing = motion.soft)),
+            exit = androidx.compose.animation.slideOutHorizontally(tween(motion.BASE, easing = motion.quiet), targetOffsetX = { it }) +
+                androidx.compose.animation.fadeOut(tween(motion.BASE, easing = motion.soft))
         ) {
             Box(modifier = Modifier.fillMaxSize().background(colors.editor_bg)) {
                 ai_add_provider_flow(
@@ -544,9 +561,6 @@ private fun ai_provider_detail_screen(
     val scope = rememberCoroutineScope()
     var key_visible by remember { mutableStateOf(false) }
     var model_menu_open by remember { mutableStateOf(false) }
-    var fetching_models by remember { mutableStateOf(false) }
-    // 模型列表脚注（成功=来源 / 失败=诊断，对应 OpenMinis Models section footer）
-    var fetch_note by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var testing by remember { mutableStateOf(false) }
     // 连接测试结果：(成功?, 回复或错误信息, 耗时ms)
     var test_result by remember { mutableStateOf<Triple<Boolean, String, Long>?>(null) }
@@ -554,6 +568,16 @@ private fun ai_provider_detail_screen(
     var add_model_input by remember { mutableStateOf("") }
     // 正在编辑能力的模型 id（null=关闭弹窗）
     var caps_edit_model by remember { mutableStateOf<String?>(null) }
+
+    // ===== 获取模型列表 → 勾选导入弹窗 =====
+    var import_open by remember { mutableStateOf(false) }
+    var import_fetching by remember { mutableStateOf(false) }
+    var import_error by remember { mutableStateOf<String?>(null) }
+    var fetched_models by remember { mutableStateOf<List<String>>(emptyList()) }
+    var fetch_job by remember { mutableStateOf<Job?>(null) }
+
+    // ===== 已配置模型的批量测试弹窗 =====
+    var test_sheet_open by remember { mutableStateOf(false) }
 
     fun update(transform: (provider_instance) -> provider_instance) = on_update(transform(instance))
 
@@ -564,7 +588,11 @@ private fun ai_provider_detail_screen(
         api_key = instance.api_key
     )
 
-    fun refresh_models() {
+    /** 测任意模型：只换 model 字段，其余连接信息取自本实例 */
+    fun settings_for_model(m: String) = temp_settings().copy(model = m)
+
+    /** 拉取 /models 端点；结果交给导入弹窗勾选，不再直接整体覆盖模型列表 */
+    fun fetch_model_list() {
         if (instance.api_key.isBlank()) {
             app_toast.show(context, "请先填写 API Key", app_toast.LENGTH_SHORT)
             return
@@ -573,24 +601,41 @@ private fun ai_provider_detail_screen(
             app_toast.show(context, "请先填写 Base URL", app_toast.LENGTH_SHORT)
             return
         }
-        fetching_models = true
-        fetch_note = null
-        scope.launch {
+        import_fetching = true
+        import_error = null
+        fetch_job?.cancel()
+        fetch_job = scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching { ai_client(temp_settings()).fetch_models() }
             }
-            fetching_models = false
+            import_fetching = false
             result.onSuccess { models ->
                 if (models.isEmpty()) {
-                    fetch_note = false to "端点返回了空列表，可手动添加模型 ID"
+                    import_error = "端点返回了空列表，可点「手动填入」添加模型 ID"
                 } else {
-                    fetch_note = true to "已从 /models 获取 ${models.size} 个模型"
-                    update { it.copy(models = models) }
+                    fetched_models = models
                 }
             }.onFailure { e ->
-                fetch_note = false to "获取失败: ${e.message ?: e.javaClass.simpleName}"
+                import_error = "获取失败: ${e.message ?: e.javaClass.simpleName}"
             }
         }
+    }
+
+    fun open_import_sheet() {
+        import_open = true
+        fetch_model_list()
+    }
+
+    fun open_test_sheet() {
+        if (instance.base_url.isBlank() || instance.api_key.isBlank()) {
+            app_toast.show(context, "请先填写 Base URL 与 API Key", app_toast.LENGTH_SHORT)
+            return
+        }
+        if (instance.selectable_models().isEmpty()) {
+            app_toast.show(context, "暂无模型可测试", app_toast.LENGTH_SHORT)
+            return
+        }
+        test_sheet_open = true
     }
 
     fun run_test() {
@@ -704,18 +749,18 @@ private fun ai_provider_detail_screen(
                                             modifier = Modifier.size(22.dp).clip(CircleShape).clickable { model_menu_open = true })
                                         if (instance.provider.supports_model_list) {
                                             Spacer(modifier = Modifier.width(6.dp))
-                                            if (fetching_models) {
+                                            if (import_fetching) {
                                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.title_highlight)
                                             } else {
-                                                Icon(Icons.Default.Refresh, contentDescription = "获取模型列表", tint = colors.title_highlight,
-                                                    modifier = Modifier.size(18.dp).clip(CircleShape).clickable { refresh_models() })
+                                                Icon(Icons.Default.CloudDownload, contentDescription = "获取模型列表", tint = colors.title_highlight,
+                                                    modifier = Modifier.size(18.dp).clip(CircleShape).clickable { open_import_sheet() })
                                             }
                                         }
                                     }
                                     val candidates = instance.selectable_models()
                                     DropdownMenu(expanded = model_menu_open, onDismissRequest = { model_menu_open = false }) {
                                         if (candidates.isEmpty()) {
-                                            DropdownMenuItem(text = { Text("无候选，点刷新获取", color = colors.subtitle) }, onClick = { model_menu_open = false })
+                                            DropdownMenuItem(text = { Text("无候选，点右侧图标获取模型列表", color = colors.subtitle) }, onClick = { model_menu_open = false })
                                         } else {
                                             candidates.forEach { m ->
                                                 DropdownMenuItem(text = { Text(m, color = colors.dialog_text) }, onClick = {
@@ -746,7 +791,7 @@ private fun ai_provider_detail_screen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // ===== 模型列表（行点击=设为默认；眼睛=隐藏；垃圾桶=移除；组头刷新 + 脚注诊断）=====
+            // ===== 模型列表（行点击=设为默认；眼睛=隐藏/恢复——隐藏的行置灰保留，可随时点回；✕=移除）=====
             Row(
                 modifier = Modifier.fillMaxWidth().padding(start = 22.dp, end = 18.dp, bottom = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -756,35 +801,45 @@ private fun ai_provider_detail_screen(
                     fontSize = 10.sp, fontWeight = FontWeight.Bold, color = colors.title_highlight,
                     modifier = Modifier.weight(1f)
                 )
-                Text("${instance.selectable_models().size}", fontSize = 10.sp, color = colors.subtitle)
-                Spacer(modifier = Modifier.width(10.dp))
+                val hidden_count = instance.hidden_models.count { it in instance.all_models() }
+                Text(
+                    if (hidden_count > 0) "${instance.selectable_models().size} 个 · 隐藏 $hidden_count" else "${instance.selectable_models().size} 个",
+                    fontSize = 10.sp, color = colors.subtitle
+                )
+                Spacer(modifier = Modifier.width(8.dp))
                 if (instance.provider.supports_model_list) {
-                    Box(
-                        modifier = Modifier.size(26.dp).clip(CircleShape).background(colors.card_bg).clickable { refresh_models() },
-                        contentAlignment = Alignment.Center
+                    // 获取模型列表：拉取 /models 后弹底部弹窗勾选导入，不直接覆盖已有列表
+                    Row(
+                        modifier = Modifier.clip(RoundedCornerShape(999.dp))
+                            .background(colors.title_highlight.copy(alpha = 0.14f))
+                            .clickable { open_import_sheet() }
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        if (fetching_models) {
-                            CircularProgressIndicator(modifier = Modifier.size(13.dp), strokeWidth = 2.dp, color = colors.title_highlight)
+                        if (import_fetching) {
+                            CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = colors.title_highlight)
                         } else {
-                            Icon(Icons.Default.Refresh, contentDescription = "刷新模型列表", tint = colors.title_highlight, modifier = Modifier.size(14.dp))
+                            Icon(Icons.Default.CloudDownload, contentDescription = null, tint = colors.title_highlight, modifier = Modifier.size(13.dp))
                         }
+                        Text("获取模型列表", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = colors.title_highlight)
                     }
                 }
             }
-            val candidates = instance.selectable_models()
-            if (candidates.isEmpty()) {
+            val all_models = instance.all_models()
+            if (all_models.isEmpty()) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(RoundedCornerShape(12.dp)).background(colors.card_bg)
                 ) {
                     Box(modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp), contentAlignment = Alignment.Center) {
-                        Text("暂无模型，刷新获取或手动添加", fontSize = 11.sp, color = colors.subtitle)
+                        Text("暂无模型，点「获取模型列表」或「手动填入」", fontSize = 11.sp, color = colors.subtitle)
                     }
                 }
             } else {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(RoundedCornerShape(12.dp))
                 ) {
-                    candidates.forEachIndexed { index, m ->
+                    all_models.forEachIndexed { index, m ->
                         if (index > 0) ai_group_divider()
                         val hidden = m in instance.hidden_models
                         val row_interaction = remember { MutableInteractionSource() }
@@ -792,23 +847,30 @@ private fun ai_provider_detail_screen(
                         Row(
                             modifier = Modifier.fillMaxWidth()
                                 .background(if (row_pressed) colors.card_pressed else colors.card_bg)
-                                .clickable(interactionSource = row_interaction, indication = null) { update { it.copy(model = m) } }
+                                .clickable(interactionSource = row_interaction, indication = null) {
+                                    // 隐藏的模型点行即恢复，避免「隐藏后行消失找不到恢复入口」
+                                    if (hidden) update { it.copy(hidden_models = it.hidden_models - m) }
+                                    else update { it.copy(model = m) }
+                                }
                                 .padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    m,
-                                    fontSize = 12.sp,
-                                    fontWeight = if (m == instance.model) FontWeight.SemiBold else FontWeight.Normal,
-                                    color = when {
-                                        hidden -> colors.card_text_subtitle.copy(alpha = 0.55f)
-                                        m == instance.model -> colors.title_highlight
-                                        else -> colors.card_text_title
-                                    },
-                                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    Text(
+                                        m,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (m == instance.model) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = when {
+                                            hidden -> colors.card_text_subtitle.copy(alpha = 0.55f)
+                                            m == instance.model -> colors.title_highlight
+                                            else -> colors.card_text_title
+                                        },
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (hidden) ai_instance_pill(text = "已隐藏", colors = colors, active = false)
+                                }
                                 if (m == instance.model) {
                                     Text("默认模型", fontSize = 9.sp, color = colors.title_highlight.copy(alpha = 0.8f))
                                 }
@@ -830,7 +892,7 @@ private fun ai_provider_detail_screen(
                                     modifier = Modifier.size(15.dp)
                                 )
                             }
-                            // 隐藏/恢复（不删除，只是不再出现在候选里）
+                            // 隐藏/恢复：隐藏的行仍保留在列表中（置灰），点眼睛即恢复
                             Box(
                                 modifier = Modifier.size(26.dp).clip(CircleShape).clickable {
                                     update { it.copy(hidden_models = if (hidden) it.hidden_models - m else it.hidden_models + m) }
@@ -840,7 +902,7 @@ private fun ai_provider_detail_screen(
                                 Icon(
                                     if (hidden) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                     contentDescription = if (hidden) "恢复" else "隐藏",
-                                    tint = if (hidden) colors.subtitle.copy(alpha = 0.5f) else colors.subtitle,
+                                    tint = if (hidden) colors.title_highlight else colors.subtitle,
                                     modifier = Modifier.size(15.dp)
                                 )
                             }
@@ -860,13 +922,18 @@ private fun ai_provider_detail_screen(
                     }
                 }
             }
-            fetch_note?.let { (ok, note) ->
-                ai_hint_text(colors = colors, text = if (ok) "✓ $note" else "✗ $note", success = ok)
-            }
-            ai_hint_text(colors = colors, text = "点模型行的调节图标，可标注上下文长度与图片/视频输入能力")
+            ai_hint_text(colors = colors, text = "眼睛=隐藏/恢复（隐藏仅从候选中排除，行保留可恢复）；调节图标=标注上下文与多模态能力")
             Spacer(modifier = Modifier.height(10.dp))
-            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
-                ai_add_button(colors = colors, label = "添加自定义模型") { add_model_open = true }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    ai_add_button(colors = colors, label = "手动填入") { add_model_open = true }
+                }
+                Box(modifier = Modifier.weight(1f)) {
+                    ai_add_button(colors = colors, icon = Icons.Default.Bolt, label = "测试模型") { open_test_sheet() }
+                }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -975,7 +1042,437 @@ private fun ai_provider_detail_screen(
             on_dismiss = { caps_edit_model = null }
         )
     }
+
+    // 已配置模型的批量测试弹窗（逐个/勾选批量，行内展示成败与耗时）
+    if (test_sheet_open) {
+        ai_model_test_sheet(
+            colors = colors,
+            import_mode = false,
+            models = instance.selectable_models(),
+            default_model = instance.model,
+            already_imported = emptySet(),
+            preselected = emptySet(),
+            fetching = false,
+            fetch_error = null,
+            settings_for = ::settings_for_model,
+            on_dismiss = { test_sheet_open = false }
+        )
+    }
+
+    // 获取模型列表 → 勾选导入弹窗（支持全选、批量测试、仅导入成功项）
+    if (import_open) {
+        ai_model_test_sheet(
+            colors = colors,
+            import_mode = true,
+            models = fetched_models,
+            default_model = instance.model,
+            already_imported = instance.all_models().toSet(),
+            preselected = fetched_models.filter { it !in instance.all_models() }.toSet(),
+            fetching = import_fetching,
+            fetch_error = import_error,
+            settings_for = ::settings_for_model,
+            on_retry_fetch = { fetch_model_list() },
+            on_import = { picked ->
+                update { it.copy(models = (it.models + picked).distinct(), hidden_models = it.hidden_models - picked.toSet()) }
+                import_open = false
+                app_toast.show(context, "已导入 ${picked.size} 个模型", app_toast.LENGTH_SHORT)
+            },
+            on_dismiss = {
+                import_open = false
+                fetch_job?.cancel()
+                import_fetching = false
+            }
+        )
+    }
+
+    // 离开详情页时取消未完成的 /models 请求
+    DisposableEffect(Unit) {
+        onDispose { fetch_job?.cancel() }
+    }
 }
+
+// ==================== 模型测试 / 导入底部弹窗 ====================
+
+/** 单个模型的测试结果：成功带耗时 ms，失败带错误摘要 */
+private data class model_test_outcome(val ok: Boolean, val ms: Long = 0L, val error: String = "")
+
+/**
+ * 模型测试 / 导入共用底部弹窗：
+ * - 测试模式（import_mode=false）：列出实例已配置的模型，行右侧闪电单独测试，
+ *   左侧勾选 + 全选后批量逐个测试，行内展示 ✓耗时 / ✗原因，标题下汇总成功/失败数。
+ * - 导入模式（import_mode=true）：展示 /models 拉取结果，勾选导入（默认勾上新模型）、
+ *   全部导入，同样支持批量测试，测试后可「仅导入成功项」。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ai_model_test_sheet(
+    colors: app_colors,
+    import_mode: Boolean,
+    models: List<String>,
+    default_model: String,
+    already_imported: Set<String>,
+    preselected: Set<String>,
+    fetching: Boolean,
+    fetch_error: String?,
+    settings_for: (String) -> ai_settings_state,
+    on_retry_fetch: (() -> Unit)? = null,
+    on_import: ((List<String>) -> Unit)? = null,
+    on_dismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    // 勾选集合（导入模式默认勾上尚未导入的新模型）
+    val selected = remember(models, preselected) {
+        mutableStateListOf<String>().apply { addAll(models.filter { it in preselected }) }
+    }
+    // 模型 id -> 测试结果
+    val results = remember(models) { mutableStateMapOf<String, model_test_outcome>() }
+    var running_model by remember { mutableStateOf<String?>(null) }
+    // 批量测试进度 (已完成, 总数)；null = 未在批量测试
+    var batch_progress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var batch_job by remember { mutableStateOf<Job?>(null) }
+    var query by remember { mutableStateOf("") }
+
+    val ok_count = results.values.count { it.ok }
+    val fail_count = results.values.count { !it.ok }
+    val batch_running = batch_progress != null || running_model != null
+
+    suspend fun run_model_test(m: String): model_test_outcome = withContext(Dispatchers.IO) {
+        runCatching { ai_client(settings_for(m)).quick_test(m) }.fold(
+            onSuccess = { (_, ms) -> model_test_outcome(ok = true, ms = ms) },
+            onFailure = { e -> model_test_outcome(ok = false, error = e.message ?: e.javaClass.simpleName) }
+        )
+    }
+
+    fun test_one(m: String) {
+        if (batch_running) return
+        running_model = m
+        scope.launch {
+            val outcome = run_model_test(m)
+            running_model = null
+            results[m] = outcome
+        }
+    }
+
+    // 批量 = 挨个顺序测试（避免并发触发限流），行上实时出结果
+    fun test_batch(list: List<String>) {
+        if (batch_running || list.isEmpty()) return
+        batch_progress = 0 to list.size
+        batch_job = scope.launch {
+            list.forEachIndexed { index, m ->
+                if (!isActive) return@launch
+                running_model = m
+                val outcome = run_model_test(m)
+                if (!isActive) return@launch
+                results[m] = outcome
+                batch_progress = (index + 1) to list.size
+            }
+            running_model = null
+            batch_progress = null
+        }
+    }
+
+    fun stop_batch() {
+        batch_job?.cancel()
+        batch_job = null
+        running_model = null
+        batch_progress = null
+    }
+
+    // 弹窗关闭即取消未完成的批量测试
+    DisposableEffect(Unit) {
+        onDispose { batch_job?.cancel() }
+    }
+
+    val visible_models = if (query.isBlank()) models else models.filter { it.contains(query, ignoreCase = true) }
+
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = { stop_batch(); on_dismiss() },
+        containerColor = colors.gradient_start,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (import_mode) "导入模型" else "测试模型",
+                    fontSize = 16.sp, fontWeight = FontWeight.Bold, color = colors.title_large,
+                    modifier = Modifier.weight(1f)
+                )
+                if (import_mode && on_retry_fetch != null && !fetching && fetch_error == null) {
+                    TextButton(onClick = on_retry_fetch) {
+                        Text("重新获取", fontSize = 12.sp, color = colors.title_highlight)
+                    }
+                }
+            }
+
+            when {
+                // 导入模式：正在拉取
+                fetching -> Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.title_highlight)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text("正在获取模型列表…", fontSize = 12.sp, color = colors.subtitle)
+                }
+                // 导入模式：拉取失败 / 空列表
+                fetch_error != null -> Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = null, tint = colors.danger, modifier = Modifier.size(20.dp))
+                    Text(fetch_error, fontSize = 12.sp, color = colors.danger, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    if (on_retry_fetch != null) {
+                        TextButton(onClick = on_retry_fetch) {
+                            Text("重试", fontSize = 13.sp, color = colors.title_highlight)
+                        }
+                    }
+                }
+                else -> {
+                    // 汇总行：批量进度 / 成败统计
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val progress = batch_progress
+                        when {
+                            progress != null -> {
+                                CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = colors.title_highlight)
+                                Text("测试中 ${progress.first.coerceAtMost(progress.second)}/${progress.second} · 可随时停止", fontSize = 11.sp, color = colors.subtitle)
+                            }
+                            running_model != null -> Text("测试中…", fontSize = 11.sp, color = colors.subtitle)
+                            results.isEmpty() -> Text(
+                                if (import_mode) "共 ${models.size} 个模型，勾选后导入（默认勾上新模型）" else "共 ${models.size} 个模型，勾选后可批量测试",
+                                fontSize = 11.sp, color = colors.subtitle
+                            )
+                            else -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = colors.success, modifier = Modifier.size(12.dp))
+                                    Text("$ok_count", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = colors.success)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Icon(Icons.Default.Close, contentDescription = null, tint = colors.danger, modifier = Modifier.size(12.dp))
+                                    Text("$fail_count", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = colors.danger)
+                                }
+                                Text("未测 ${models.size - results.size}", fontSize = 11.sp, color = colors.subtitle)
+                            }
+                        }
+                    }
+
+                    // 模型多时支持搜索过滤（部分端点会返回上百个）
+                    if (models.size > 15) {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("搜索模型…", fontSize = 13.sp, color = colors.input_hint) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = colors.subtitle, modifier = Modifier.size(17.dp)) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            colors = field_colors(colors)
+                        )
+                    }
+
+                    // 全选行（作用于当前过滤结果）
+                    val select_all_state = when {
+                        visible_models.isEmpty() -> ToggleableState.Off
+                        visible_models.all { it in selected } -> ToggleableState.On
+                        visible_models.any { it in selected } -> ToggleableState.Indeterminate
+                        else -> ToggleableState.Off
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TriStateCheckbox(
+                            state = select_all_state,
+                            onClick = {
+                                if (visible_models.all { it in selected }) selected.removeAll(visible_models.toSet())
+                                else selected.addAll(visible_models.filter { it !in selected })
+                            },
+                            colors = checkbox_colors(colors)
+                        )
+                        Text("全选", fontSize = 13.sp, color = colors.card_text_title, modifier = Modifier.padding(start = 4.dp))
+                        Spacer(modifier = Modifier.weight(1f))
+                        Text("已选 ${selected.size}/${models.size}", fontSize = 10.sp, color = colors.subtitle)
+                    }
+
+                    LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp)) {
+                        items(visible_models, key = { it }) { m ->
+                            ai_model_test_row(
+                                m = m,
+                                is_default = m == default_model,
+                                imported = import_mode && m in already_imported,
+                                selected = m in selected,
+                                running = running_model == m,
+                                outcome = results[m],
+                                batch_running = batch_running,
+                                colors = colors,
+                                on_toggle_select = {
+                                    if (m in selected) selected.remove(m) else selected.add(m)
+                                },
+                                on_test = { test_one(m) }
+                            )
+                        }
+                    }
+
+                    // ===== 底部动作 =====
+                    val progress = batch_progress
+                    if (progress != null) {
+                        // 批量进行中：唯一动作是停止
+                        ai_sheet_action_button(
+                            label = "停止测试（${progress.first.coerceAtMost(progress.second)}/${progress.second}）",
+                            colors = colors,
+                            container = colors.danger.copy(alpha = 0.14f),
+                            content_color = colors.danger,
+                            on_click = { stop_batch() }
+                        )
+                    } else {
+                        ai_sheet_action_button(
+                            label = if (running_model != null) "测试中…" else "批量测试所选 (${selected.size})",
+                            colors = colors,
+                            container = colors.title_highlight.copy(alpha = 0.14f),
+                            content_color = colors.title_highlight,
+                            icon = Icons.Default.Bolt,
+                            enabled = selected.isNotEmpty() && running_model == null,
+                            on_click = { test_batch(selected.toList()) }
+                        )
+                        if (import_mode && on_import != null) {
+                            ai_sheet_action_button(
+                                label = "导入所选 (${selected.size})",
+                                colors = colors,
+                                container = colors.title_highlight,
+                                content_color = colors.dialog_clone_text,
+                                icon = Icons.Default.CloudDownload,
+                                enabled = selected.isNotEmpty(),
+                                on_click = { on_import(selected.toList()) }
+                            )
+                            if (ok_count > 0) {
+                                ai_sheet_action_button(
+                                    label = "仅导入成功项 ($ok_count)",
+                                    colors = colors,
+                                    container = colors.success.copy(alpha = 0.16f),
+                                    content_color = colors.success,
+                                    icon = Icons.Default.Check,
+                                    on_click = { on_import(models.filter { results[it]?.ok == true }) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+    }
+}
+
+/** 弹窗单行：勾选框 + 模型名(默认/已导入徽标) + 行内结果 + 右侧闪电单独测试 */
+@Composable
+private fun ai_model_test_row(
+    m: String,
+    is_default: Boolean,
+    imported: Boolean,
+    selected: Boolean,
+    running: Boolean,
+    outcome: model_test_outcome?,
+    batch_running: Boolean,
+    colors: app_colors,
+    on_toggle_select: () -> Unit,
+    on_test: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(colors.card_bg)
+            .clickable(onClick = on_toggle_select)
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = selected,
+            onCheckedChange = null,
+            colors = checkbox_colors(colors)
+        )
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(
+                    m,
+                    fontSize = 12.sp,
+                    fontWeight = if (is_default) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (is_default) colors.title_highlight else colors.card_text_title,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+                if (is_default) ai_caps_chip("默认", colors)
+                if (imported) ai_instance_pill(text = "已导入", colors = colors, active = false)
+            }
+            when {
+                running -> Text("测试中…", fontSize = 10.sp, color = colors.subtitle)
+                outcome != null && outcome.ok -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Icon(Icons.Default.Check, contentDescription = null, tint = colors.success, modifier = Modifier.size(11.dp))
+                    Text("${outcome.ms}ms", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = colors.success)
+                }
+                outcome != null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = null, tint = colors.danger, modifier = Modifier.size(11.dp))
+                    Text(outcome.error, fontSize = 10.sp, color = colors.danger, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+        // 单独测试（批量进行中禁用，避免并发请求）
+        Box(
+            modifier = Modifier.size(32.dp).clip(CircleShape)
+                .alpha(if (batch_running) 0.4f else 1f)
+                .clickable(enabled = !batch_running, onClick = on_test),
+            contentAlignment = Alignment.Center
+        ) {
+            if (running) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = colors.title_highlight)
+            } else {
+                Icon(Icons.Default.Bolt, contentDescription = "测试", tint = colors.title_highlight, modifier = Modifier.size(15.dp))
+            }
+        }
+    }
+}
+
+/** 弹窗底部的整宽动作按钮（容器色/文字色可配，禁用态整体降透明度） */
+@Composable
+private fun ai_sheet_action_button(
+    label: String,
+    colors: app_colors,
+    container: Color,
+    content_color: Color,
+    icon: ImageVector? = null,
+    enabled: Boolean = true,
+    on_click: () -> Unit
+) {
+    val interaction_source = remember { MutableInteractionSource() }
+    val is_pressed by interaction_source.collectIsPressedAsState()
+    val background = if (is_pressed) container.copy(alpha = (container.alpha * 0.8f).coerceIn(0f, 1f)) else container
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .alpha(if (enabled) 1f else 0.4f)
+            .clip(RoundedCornerShape(10.dp))
+            .background(background)
+            .clickable(interactionSource = interaction_source, indication = null, enabled = enabled, onClick = on_click)
+            .padding(vertical = 11.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        icon?.let {
+            Icon(it, contentDescription = null, tint = content_color, modifier = Modifier.size(15.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+        }
+        Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = content_color)
+    }
+}
+
+/** 弹窗勾选框配色（与主题高亮色一致） */
+@Composable
+private fun checkbox_colors(colors: app_colors) = CheckboxDefaults.colors(
+    checkedColor = colors.title_highlight,
+    uncheckedColor = colors.subtitle.copy(alpha = 0.6f),
+    checkmarkColor = colors.dialog_clone_text
+)
 
 /** 常用上下文窗口快捷档位（tokens） */
 private val context_presets = listOf(
@@ -1201,9 +1698,9 @@ private fun ai_add_provider_flow(
                 targetState = step,
                 transitionSpec = {
                     if (targetState > initialState) {
-                        (slideInHorizontally { it } + fadeIn()) togetherWith (slideOutHorizontally { -it } + fadeOut())
+                        (slideInHorizontally(tween(motion.BASE, easing = motion.quiet)) { it } + fadeIn(tween(motion.BASE, easing = motion.soft))) togetherWith (slideOutHorizontally(tween(motion.BASE, easing = motion.quiet)) { -it } + fadeOut(tween(motion.BASE, easing = motion.soft)))
                     } else {
-                        (slideInHorizontally { -it } + fadeIn()) togetherWith (slideOutHorizontally { it } + fadeOut())
+                        (slideInHorizontally(tween(motion.BASE, easing = motion.quiet)) { -it } + fadeIn(tween(motion.BASE, easing = motion.soft))) togetherWith (slideOutHorizontally(tween(motion.BASE, easing = motion.quiet)) { it } + fadeOut(tween(motion.BASE, easing = motion.soft)))
                     }
                 },
                 label = "addProviderStep"
@@ -1979,7 +2476,7 @@ private fun ai_empty_hint(colors: app_colors, text: String) {
 }
 
 @Composable
-private fun ai_add_button(colors: app_colors, label: String = "添加", on_click: () -> Unit) {
+private fun ai_add_button(colors: app_colors, label: String = "添加", icon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Default.Add, on_click: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(10.dp),
@@ -1987,7 +2484,7 @@ private fun ai_add_button(colors: app_colors, label: String = "添加", on_click
         onClick = on_click
     ) {
         Row(modifier = Modifier.padding(vertical = 10.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Add, contentDescription = null, tint = colors.title_highlight, modifier = Modifier.size(16.dp))
+            Icon(icon, contentDescription = null, tint = colors.title_highlight, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(6.dp))
             Text(label, color = colors.title_highlight, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }

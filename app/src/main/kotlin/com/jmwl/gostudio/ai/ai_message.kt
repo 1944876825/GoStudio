@@ -67,8 +67,13 @@ data class ai_message(
     val summary_tokens_before: Long = 0,
     /** 系统通知（如"已暂停"）：仅 UI 展示，不发给 API */
     val is_system_notice: Boolean = false,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    /** 进程内唯一 id：LazyColumn 稳定 key 用（copy 保持不变；时间戳同毫秒会撞，index 做 key 删除后会错位） */
+    val uid: Long = next_uid.incrementAndGet()
 ) {
+    companion object {
+        private val next_uid = java.util.concurrent.atomic.AtomicLong(0)
+    }
     /** 是否有实际可见文本（空白/纯工具调用的 assistant 消息不显示气泡） */
     val has_visible_text: Boolean get() = text.isNotBlank()
 

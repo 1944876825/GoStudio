@@ -14,20 +14,34 @@ data class ai_session_meta(
 )
 
 /**
- * 会话持久化：每个项目一个 JSONL 文件，每行一条消息。
+ * 会话持久化：按作用域（scope）隔离，每个会话一个 JSONL 文件，每行一条消息。
  *
- * 存储位置：`<app home>/.ai/sessions/<session_id>.jsonl`
- * session_id 通常用项目名或 "global"（主界面通用问答）。
+ * 存储位置：`<app home>/.ai/sessions/<scope>/<session_id>.jsonl`
+ * - 主界面全局问答：scope = `_global`
+ * - 项目编辑器：scope = `p-<项目名>-<路径哈希>`（见 [project_scope]）
  *
- * 重启 app 后调 [load_session] 恢复历史。
+ * scope 目录内另有 `.current` 标记文件记录该作用域上次激活的会话，
+ * 重进项目时自动续上之前所在的会话，而不是总回到默认会话。
+ * 旧版平铺在 sessions/ 根目录的会话文件在构造时一次性迁移进 scope 目录。
  */
-class ai_session_store(private val sessions_dir: File) {
+class ai_session_store(
+    private val sessions_dir: File,
+    private val scope: String = GLOBAL_SCOPE,
+    /** 旧版平铺会话文件名（不含扩展名），迁移进本 scope 用（项目 scope 传项目名） */
+    private val legacy_ids: List<String> = emptyList()
+) {
     private val gson = Gson()
+    private val scope_dir = File(sessions_dir, sanitize_scope_name(scope))
+    private val current_marker = File(scope_dir, CURRENT_MARKER)
 
-    init { sessions_dir.mkdirs() }
+    init {
+        sessions_dir.mkdirs()
+        scope_dir.mkdirs()
+        migrate_legacy_sessions()
+    }
 
-    private fun session_file(session_id: String): File = File(sessions_dir, "$session_id.jsonl")
-    private fun meta_file(session_id: String): File = File(sessions_dir, "$session_id.meta.json")
+    private fun session_file(session_id: String): File = File(scope_dir, "$session_id.jsonl")
+    private fun meta_file(session_id: String): File = File(scope_dir, "$session_id.meta.json")
 
     /** 保存整个对话历史（覆盖写），同时更新会话元信息（标题/消息数） */
     fun save_session(session_id: String, messages: List<ai_message>) {
@@ -50,8 +64,9 @@ class ai_session_store(private val sessions_dir: File) {
                 writer.newLine()
             }
         }
-        // 更新 sidecar 元信息
+        // 更新 sidecar 元信息 + 上次激活标记（重进项目续上本会话）
         save_meta(session_id, first_user_text.ifBlank { "新对话" }, visible_count)
+        set_current_session_id(session_id)
     }
 
     /** 保存会话元信息 sidecar（标题/消息数） */
@@ -78,9 +93,9 @@ class ai_session_store(private val sessions_dir: File) {
         }.getOrDefault(emptyList())
     }
 
-    /** 列出所有会话（按修改时间倒序），含标题/消息数 */
+    /** 列出本作用域的所有历史会话（按修改时间倒序），含标题/消息数 */
     fun list_sessions(): List<ai_session_meta> {
-        return sessions_dir.listFiles { f -> f.isFile && f.name.endsWith(".jsonl") }
+        return scope_dir.listFiles { f -> f.isFile && f.name.endsWith(".jsonl") }
             ?.map { file ->
                 val id = file.nameWithoutExtension
                 val meta = read_meta(id)
@@ -93,6 +108,55 @@ class ai_session_store(private val sessions_dir: File) {
             }
             ?.sortedByDescending { it.mtime }
             ?: emptyList()
+    }
+
+    /** 本作用域上次激活的会话 id；标记缺失或会话文件已不存在时返回 null */
+    fun read_current_session_id(): String? {
+        val id = runCatching { current_marker.readText().trim() }.getOrNull() ?: return null
+        if (id.isEmpty() || !File(scope_dir, "$id.jsonl").isFile) return null
+        return id
+    }
+
+    /** 记录本作用域当前激活的会话（新建/切换/保存时调用） */
+    fun set_current_session_id(session_id: String) {
+        runCatching { current_marker.writeText(session_id) }
+    }
+
+    /**
+     * 一次性迁移旧版平铺会话文件（sessions/&lt;id&gt;.jsonl）到本 scope 目录：
+     * 全局 scope 收编 global.jsonl 和无法归属项目的 chat-*.jsonl；
+     * 项目 scope 只收 legacy_ids 指定的文件（通常是项目名）。
+     * 目标已存在时丢弃旧文件，避免覆盖。
+     */
+    private fun migrate_legacy_sessions() {
+        runCatching {
+            val flat_files = sessions_dir.listFiles { f -> f.isFile } ?: return
+            val owned = mutableSetOf<String>()
+            if (scope == GLOBAL_SCOPE) {
+                owned.add(GLOBAL_SESSION_ID)
+                for (f in flat_files) {
+                    val id = legacy_id_of(f) ?: continue
+                    if (id.startsWith("chat-")) owned.add(id)
+                }
+            } else {
+                owned.addAll(legacy_ids)
+            }
+            for (id in owned) {
+                for (name in listOf("$id.jsonl", "$id.meta.json")) {
+                    val src = File(sessions_dir, name)
+                    if (!src.isFile) continue
+                    val dst = File(scope_dir, name)
+                    if (dst.exists()) src.delete() else src.renameTo(dst)
+                }
+            }
+        }
+    }
+
+    /** 平铺文件名 → 旧会话 id（.jsonl / .meta.json 两种） */
+    private fun legacy_id_of(f: File): String? = when {
+        f.name.endsWith(".jsonl") -> f.name.removeSuffix(".jsonl")
+        f.name.endsWith(".meta.json") -> f.name.removeSuffix(".meta.json")
+        else -> null
     }
 
     /** 读取 sidecar 元信息，返回 (title, message_count) */
@@ -119,6 +183,30 @@ class ai_session_store(private val sessions_dir: File) {
         meta_file(session_id).delete()
     }
 
+    companion object {
+        /** 主界面全局问答的 scope */
+        const val GLOBAL_SCOPE = "_global"
+        /** 全局问答的会话 id（旧版平铺文件名，迁移用） */
+        private const val GLOBAL_SESSION_ID = "global"
+        /** scope 目录内记录上次激活会话的标记文件名 */
+        private const val CURRENT_MARKER = ".current"
+
+        /**
+         * 项目 scope：目录名 + 路径哈希。项目统一放在 projects/ 根下时目录名
+         * 天然唯一，但导入项目可在任意路径——加路径哈希保证同名不串会话。
+         */
+        fun project_scope(project_dir: File): String {
+            val name = sanitize_scope_name(project_dir.name)
+            val path = runCatching { project_dir.canonicalPath }.getOrDefault(project_dir.absolutePath)
+            val hash = Integer.toHexString(path.hashCode())
+            return "p-$name-$hash"
+        }
+
+        /** scope 目录名安全化：只留字母数字下划线连字符，截断 48 字符 */
+        private fun sanitize_scope_name(name: String): String =
+            name.replace(Regex("[^A-Za-z0-9_-]"), "_").take(48).ifBlank { "s" }
+    }
+
     private fun message_to_json(msg: ai_message): JsonObject {
         val obj = JsonObject()
         obj.addProperty("role", msg.role.name)
@@ -126,6 +214,19 @@ class ai_session_store(private val sessions_dir: File) {
         if (msg.tool_calls.isNotEmpty()) {
             obj.add("tool_calls", gson.toJsonTree(msg.tool_calls.map { tc ->
                 mapOf("id" to tc.id, "name" to tc.name, "arguments_json" to tc.arguments_json)
+            }))
+        }
+        // 工具执行记录（UI 卡片 + 压缩转录用）：结果截断防会话文件膨胀
+        if (msg.tool_executions.isNotEmpty()) {
+            obj.add("tool_executions", gson.toJsonTree(msg.tool_executions.map { e ->
+                mapOf<String, Any?>(
+                    "id" to e.call.id,
+                    "name" to e.call.name,
+                    "arguments_json" to e.call.arguments_json,
+                    "status" to e.status.name,
+                    "result" to e.result.take(10_000),
+                    "error_message" to e.error_message
+                )
             }))
         }
         if (msg.tool_call_id.isNotEmpty()) obj.addProperty("tool_call_id", msg.tool_call_id)
@@ -150,6 +251,22 @@ class ai_session_store(private val sessions_dir: File) {
                 arguments_json = tcObj.get("arguments_json").asString
             )
         } ?: emptyList()
+        val tool_executions = obj.getAsJsonArray("tool_executions")?.mapNotNull { el ->
+            // 单条损坏不能拖垮整个会话加载
+            runCatching {
+                val e = el.asJsonObject
+                ai_tool_execution(
+                    call = ai_tool_call(
+                        id = e.get("id").asString,
+                        name = e.get("name").asString,
+                        arguments_json = e.get("arguments_json")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                    ),
+                    status = ai_tool_status.valueOf(e.get("status").asString),
+                    result = e.get("result")?.takeIf { !it.isJsonNull }?.asString ?: "",
+                    error_message = e.get("error_message")?.takeIf { !it.isJsonNull }?.asString
+                )
+            }.getOrNull()
+        } ?: emptyList()
         val tool_call_id = obj.get("tool_call_id")?.takeIf { !it.isJsonNull }?.asString ?: ""
         val is_error = obj.get("is_error")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
         val reasoning = obj.get("reasoning")?.takeIf { !it.isJsonNull }?.asString ?: ""
@@ -158,6 +275,7 @@ class ai_session_store(private val sessions_dir: File) {
         val summary_tokens_before = obj.get("summary_tokens_before")?.takeIf { !it.isJsonNull }?.asLong ?: 0L
         return ai_message(
             role = role, text = text, tool_calls = tool_calls,
+            tool_executions = tool_executions,
             tool_call_id = tool_call_id, is_error = is_error, reasoning = reasoning,
             is_summary = is_summary,
             summary_origin_count = summary_origin_count,

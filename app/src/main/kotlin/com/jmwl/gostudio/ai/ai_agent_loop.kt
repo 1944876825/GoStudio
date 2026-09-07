@@ -83,8 +83,35 @@ class ai_agent_loop(
     private var initialized = false
 
     private fun on_main(action: () -> Unit) {
-        if (Looper.myLooper() == Looper.getMainLooper()) action()
-        else main_handler.post { action() }
+        val run = {
+            action()
+            // 组合外的快照状态写入（messages 列表等）不会主动通知 Compose 应用变更，
+            // 在静止无输入的界面上可能一直不刷新：数据已更新但 UI 停留在旧状态，触摸才恢复。
+            // 显式发送应用通知，强制失效→重组立即生效。
+            androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) run()
+        else main_handler.post(run)
+    }
+
+    /**
+     * 把 [target] 的最新状态刷进消息列表（触发 Compose 重组）。
+     * 按优先级定位：身份（===）→ 缓存下标（执行时读取并校验同角色同时间戳，防串位）→ 追加。
+     * 任何一条路径成功都能保证 UI 看到最终内容（尤其是错误信息），不会卡在流式占位。
+     */
+    private fun post_assistant_refresh(target: ai_message, index_holder: IntArray) {
+        on_main {
+            val identity_idx = messages.indexOfFirst { it === target }
+            val fallback_index = index_holder[0]
+            when {
+                identity_idx >= 0 -> messages[identity_idx] = target.copy()
+                fallback_index in messages.indices &&
+                    messages[fallback_index].role == target.role &&
+                    messages[fallback_index].timestamp == target.timestamp ->
+                    messages[fallback_index] = target.copy()
+                else -> messages.add(target.copy())
+            }
+        }
     }
 
     /** 初始化：启动 MCP、发现 skill、恢复历史会话。在 IO 线程跑一次。 */
@@ -92,9 +119,11 @@ class ai_agent_loop(
         if (initialized) return
         initialized = true
         withContext(Dispatchers.IO) {
-            // 恢复历史会话
+            // 恢复历史会话：优先本作用域上次激活的会话（项目内新建/切换过的会话重进时续上）
             session_store?.let {
-                val history = it.load_session(session_id)
+                val target_id = it.read_current_session_id() ?: session_id
+                if (target_id != session_id) session_id = target_id
+                val history = it.load_session(target_id)
                 if (history.isNotEmpty()) on_main { messages.addAll(history) }
             }
             // 发现 skill
@@ -185,7 +214,10 @@ class ai_agent_loop(
         current_job?.cancel()
         on_main {
             _is_running.value = false
-            messages.lastOrNull { it.streaming }?.let { it.streaming = false }
+            // 用 copy() 替换实例才能触发 Compose 重组（直接改 var 字段 UI 看不见）
+            for (i in messages.indices) {
+                if (messages[i].streaming) messages[i] = messages[i].copy(streaming = false)
+            }
         }
     }
 
@@ -214,6 +246,7 @@ class ai_agent_loop(
         steering_queue?.clear()
         _queued_count.value = 0
         session_id = new_id
+        session_store?.set_current_session_id(new_id)
         val history = session_store?.load_session(new_id) ?: emptyList()
         on_main {
             messages.clear()
@@ -231,6 +264,7 @@ class ai_agent_loop(
         _queued_count.value = 0
         val new_id = "chat-" + System.currentTimeMillis()
         session_id = new_id
+        session_store?.set_current_session_id(new_id)
         on_main {
             messages.clear()
             refresh_context_usage()
@@ -351,7 +385,10 @@ class ai_agent_loop(
         current_job = scope_launcher { run_agent_loop() }
     }
 
-    private suspend fun run_agent_loop() = withContext(Dispatchers.IO) {
+    private suspend fun run_agent_loop() {
+        // 在 withContext 外捕获外层 Job（launch 返回的那个），供 finally 判断「本 loop 是否仍是当前 loop」
+        val this_job = kotlin.coroutines.coroutineContext[Job]
+        withContext(Dispatchers.IO) {
         try {
         var settings = settings_provider()
         val env = env_provider()
@@ -386,9 +423,14 @@ class ai_agent_loop(
             val tools_api = if (settings.enable_tools) tool_registry.to_api_tools() else emptyList()
 
             val assistant_msg = ai_message(role = ai_message_role.ASSISTANT, streaming = true)
-            on_main { messages.add(assistant_msg) }
             val msg_index_holder = intArrayOf(-1)
-            on_main { msg_index_holder[0] = messages.size - 1 }
+            // 添加占位和记录下标必须在同一个 post 里原子完成：
+            // 403 等错误可能在几十毫秒内返回，拆成两个 post 会出现下标还是 -1 的竞态窗口，
+            // 导致错误更新被静默丢弃、UI 永远停在「思考中」。
+            on_main {
+                messages.add(assistant_msg)
+                msg_index_holder[0] = messages.size - 1
+            }
 
             val collected_tool_calls = mutableListOf<ai_tool_call>()
             var had_error = false
@@ -396,30 +438,33 @@ class ai_agent_loop(
             client.stream_chat(final_messages, tools_api, object : ai_stream_callback {
                 override fun on_text(delta: String) {
                     assistant_msg.text += delta
-                    val idx = msg_index_holder[0]
-                    // 用 copy() 创建新实例触发 Compose 更新（同引用 set 不会重组）
-                    on_main { if (idx in messages.indices) messages[idx] = assistant_msg.copy() }
+                    post_assistant_refresh(assistant_msg, msg_index_holder)
                 }
                 override fun on_reasoning(delta: String) {
                     // reasoning 模型的思考链增量（UI 展示用，不发给 API）
                     assistant_msg.reasoning += delta
-                    val idx = msg_index_holder[0]
-                    on_main { if (idx in messages.indices) messages[idx] = assistant_msg.copy() }
+                    post_assistant_refresh(assistant_msg, msg_index_holder)
                 }
                 override fun on_done(tool_calls: List<ai_tool_call>) {
                     collected_tool_calls.addAll(tool_calls)
                 }
                 override fun on_error(message: String) {
-                    assistant_msg.text = "⚠️ $message"
+                    // 已流出部分内容时保留原文，错误附在后面（不覆盖）
+                    assistant_msg.text = buildString {
+                        if (assistant_msg.text.isNotBlank()) {
+                            append(assistant_msg.text.trimEnd()).append("\n\n")
+                        }
+                        append("⚠️ ").append(message)
+                    }
                     assistant_msg.is_error = true
+                    assistant_msg.streaming = false
                     had_error = true
-                    val idx = msg_index_holder[0]
-                    on_main { if (idx in messages.indices) messages[idx] = assistant_msg.copy() }
+                    post_assistant_refresh(assistant_msg, msg_index_holder)
                 }
             })
 
             assistant_msg.streaming = false
-            on_main { msg_index_holder[0].let { idx -> if (idx in messages.indices) messages[idx] = assistant_msg.copy() } }
+            post_assistant_refresh(assistant_msg, msg_index_holder)
 
             if (had_error || cancelled) break
             if (collected_tool_calls.isEmpty()) break
@@ -520,6 +565,9 @@ class ai_agent_loop(
         }
         persist_session()
         on_main { refresh_context_usage() }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 用户停止/切换会话导致的协程取消不是错误，不显示「异常」气泡
+            throw e
         } catch (e: Throwable) {
             // 捕获 loop 内任何异常，显示到对话里（避免静默失败）
             val err_text = "⚠️ agent loop 异常: ${e.javaClass.simpleName}: ${e.message ?: ""}"
@@ -528,10 +576,18 @@ class ai_agent_loop(
                 _is_running.value = false
             }
         } finally {
+            // 只在「本 loop 仍是当前 loop」时复位（steering 续跑会启动新 loop，不能误伤新状态）
             on_main {
-                _is_running.value = false
+                if (current_job === this_job) {
+                    // 兜底：结束任何残留的流式占位，防止「思考中」永久卡住
+                    for (i in messages.indices) {
+                        if (messages[i].streaming) messages[i] = messages[i].copy(streaming = false)
+                    }
+                    _is_running.value = false
+                }
                 refresh_context_usage()
             }
+        }
         }
     }
 
@@ -638,5 +694,9 @@ class ai_agent_loop(
         return msg.copy(tool_executions = newExecs)
     }
 
-    private suspend fun <T> on_main_and_wait(action: () -> T): T = withContext(Dispatchers.Main) { action() }
+    private suspend fun <T> on_main_and_wait(action: () -> T): T = withContext(Dispatchers.Main) {
+        val result = action()
+        androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
+        result
+    }
 }

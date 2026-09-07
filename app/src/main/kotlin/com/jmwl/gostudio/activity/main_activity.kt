@@ -107,6 +107,12 @@ class main_activity : ComponentActivity() {
         load_initial_data()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // 从编辑器返回时刷新最近项目（项目图标等配置可能已变化）
+        lifecycleScope.launch { reload_recent_projects() }
+    }
+
     private fun load_initial_data() {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
@@ -426,7 +432,9 @@ class main_activity : ComponentActivity() {
             name = name,
             path = path,
             go_version = go_version,
-            last_opened = last_opened
+            last_opened = last_opened,
+            template = template,
+            icon_path = app_icon_path
         )
     }
 }

@@ -32,6 +32,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -67,6 +68,7 @@ import com.jmwl.gostudio.ui.dialogs.editor.editor_exit_confirm_dialog
 import com.jmwl.gostudio.ui.dialogs.editor.editor_unsaved_file_dialog
 import com.jmwl.gostudio.ui.screens.editor.*
 import com.jmwl.gostudio.ui.theme.app_theme_provider
+import com.jmwl.gostudio.ui.theme.motion
 import com.jmwl.gostudio.gostudio_application
 import io.github.rosemoe.sora.text.Content
 import io.github.rosemoe.sora.langs.textmate.TextMateLanguage
@@ -453,8 +455,10 @@ class editor_activity : ComponentActivity() {
 
         AnimatedVisibility(
             visibleState = ai_settings_visibility,
-            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
-            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
+            enter = slideInHorizontally(tween(motion.BASE, easing = motion.quiet), initialOffsetX = { it }) +
+                fadeIn(tween(motion.BASE, easing = motion.soft)),
+            exit = slideOutHorizontally(tween(motion.BASE, easing = motion.quiet), targetOffsetX = { it }) +
+                fadeOut(tween(motion.BASE, easing = motion.soft))
         ) {
             Box(
                 modifier = Modifier
@@ -851,7 +855,13 @@ class editor_activity : ComponentActivity() {
             global_prompts_dir = global_prompts_dir,
             project_prompts_dir = project_prompts_dir
         )
-        val session_store = com.jmwl.gostudio.ai.ai_session_store(sessions_dir)
+        // 会话按项目隔离：scope = p-<项目名>-<路径哈希>，历史列表只见本项目会话；
+        // legacy_ids 让旧版以项目名平铺的会话文件迁移进本项目 scope
+        val session_store = com.jmwl.gostudio.ai.ai_session_store(
+            sessions_dir,
+            scope = com.jmwl.gostudio.ai.ai_session_store.project_scope(project),
+            legacy_ids = listOf(project.name)
+        )
         val mcp_manager = com.jmwl.gostudio.ai.mcp.ai_mcp_manager(project)
         val file_change_notifier = com.jmwl.gostudio.ai.ai_file_change_notifier()
         val steering_queue = com.jmwl.gostudio.ai.ai_steering_queue()

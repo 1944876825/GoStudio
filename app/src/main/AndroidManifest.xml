@@ -82,13 +82,13 @@
             android:name=".runtime.runtime_host_activity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.Material3.DayNight.NoActionBar"
+            android:theme="@style/Theme.GoStudio.MaterialSharedAxis"
             android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity
             android:name=".designer.layout_designer_activity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.Material3.DayNight.NoActionBar"
+            android:theme="@style/Theme.GoStudio.MaterialSharedAxis"
             android:configChanges="orientation|screenSize|keyboardHidden" />
         <activity
             android:name=".activity.editor_activity"

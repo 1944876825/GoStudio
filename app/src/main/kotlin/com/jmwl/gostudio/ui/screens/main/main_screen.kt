@@ -28,6 +28,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import com.jmwl.gostudio.ui.components.press_scale
 import com.jmwl.gostudio.ui.components.entrance_slide_up
+import com.jmwl.gostudio.ui.components.remember_project_icon_bitmap
+import com.jmwl.gostudio.ui.components.project_icon_image
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -40,7 +42,9 @@ data class recent_project(
     val name: String,
     val path: String,
     val go_version: String,
-    val last_opened: String
+    val last_opened: String,
+    val template: String = "",
+    val icon_path: String = ""
 )
 
 /** 首页底部导航的三个页签（参考 CodeAssist HomeTab）。 */
@@ -68,6 +72,7 @@ fun main_screen(
     on_ai_settings_click: () -> Unit = {},
     on_git_settings_click: () -> Unit = {},
     on_about_click: () -> Unit = {},
+    on_feedback_click: () -> Unit = {},
     recent_projects: List<recent_project> = emptyList(),
     on_project_click: (recent_project) -> Unit = {},
     on_project_copy: (recent_project) -> Unit = {},
@@ -149,6 +154,7 @@ fun main_screen(
                         on_ai_settings_click = on_ai_settings_click,
                         on_git_settings_click = on_git_settings_click,
                         on_about_click = on_about_click,
+                        on_feedback_click = on_feedback_click,
                         on_tools_click = on_tools,
                         on_plugins_click = on_plugins
                     )
@@ -401,7 +407,7 @@ private fun section_label(text: String, count: Int? = null) {
     }
 }
 
-/** 项目卡：错峰滑入 + 字母头像 + 版本胶囊；长按弹操作菜单。 */
+/** 项目卡：错峰滑入 + 头像（App 界面项目用自身 icon.png）+ 版本胶囊；长按弹操作菜单。 */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun project_card(
@@ -428,17 +434,32 @@ private fun project_card(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        // 字母头像（CA 加载项目图标，GoStudio 用首字母 + primaryContainer）
-        Box(
-            Modifier.size(54.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(14.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                project.name.take(1).uppercase().ifBlank { "G" },
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold
-            )
+        // 头像（CA 加载项目图标）：App 界面项目用自身 icon.png（与打包 APK 同一份），未设置时手机图标占位，其余 Go 项目用首字母
+        val icon_bitmap = remember_project_icon_bitmap(project.icon_path)
+        when {
+            icon_bitmap != null -> project_icon_image(icon_bitmap, size = 54.dp, corner = 14.dp)
+            project.template == "app-ui" -> Box(
+                Modifier.size(54.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(14.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.Smartphone,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+            else -> Box(
+                Modifier.size(54.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(14.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    project.name.take(1).uppercase().ifBlank { "G" },
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
@@ -525,6 +546,7 @@ private fun settings_tab_page(
     on_ai_settings_click: () -> Unit,
     on_git_settings_click: () -> Unit,
     on_about_click: () -> Unit,
+    on_feedback_click: () -> Unit,
     on_tools_click: () -> Unit,
     on_plugins_click: () -> Unit
 ) {
@@ -535,6 +557,7 @@ private fun settings_tab_page(
         on_ai_click = on_ai_settings_click,
         on_git_click = on_git_settings_click,
         on_about_click = on_about_click,
+        on_feedback_click = on_feedback_click,
         on_tools_click = on_tools_click,
         on_plugins_click = on_plugins_click
     )

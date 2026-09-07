@@ -40,6 +40,7 @@ class gostudio_application : Application() {
         logger_manager.is_debug = false
         logger_manager.enable_file_log = true
         logger_manager.errors_only = true
+        com.jmwl.gostudio.feedback.feedback_settings_store.init(this)
 
         val create_dirs = listOf(
             File(filesDir, "home"),

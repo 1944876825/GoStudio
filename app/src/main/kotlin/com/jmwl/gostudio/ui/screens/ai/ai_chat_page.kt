@@ -286,7 +286,7 @@ fun ai_chat_page(
                     state = list_state,
                     contentPadding = PaddingValues(vertical = 6.dp)
                 ) {
-                    itemsIndexed(agent.messages, key = { index, msg -> "$index-${msg.timestamp}-${msg.role.name}" }) { index, msg ->
+                    itemsIndexed(agent.messages, key = { _, msg -> msg.uid }) { index, msg ->
                         ai_message_bubble(
                             message = msg,
                             show_thinking = show_thinking,

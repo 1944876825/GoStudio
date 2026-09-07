@@ -1,0 +1,27 @@
+services:
+  gostudio-api:
+    build: .
+    container_name: gostudio-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # sqlite 数据目录，备份这个目录即可
+      - ./data:/data
+    environment:
+      # 客户端 key（App 端 X-GoStudio-Backend-Key / 翻译 X-GoStudio-Translation-Key）
+      GOSTUDIO_API_KEYS: "change-me-backend-key"
+      # 管理后台账号（必填）
+      GOSTUDIO_API_ADMIN_USERNAME: "admin"
+      GOSTUDIO_API_ADMIN_PASSWORD: "change-me-admin-password"
+      # JWT 签名密钥（必填，>=16 字符）
+      GOSTUDIO_API_ADMIN_JWT_SECRET: "change-me-jwt-secret-16chars"
+      # 反代不剥前缀时才需要（如 nginx 直接转发 /api/ 前缀）
+      # GOSTUDIO_API_ROUTE_PREFIX: "/api"
+      # ---- 翻译模块（与旧 translation-api 相同的变量）----
+      TRANSLATION_PROVIDER: "openai"
+      LLM_BASE_URL: "https://open.bigmodel.cn/api/paas/v4/"
+      LLM_MODEL: "glm-4.6"
+      LLM_API_KEY: ""
+      # LLM_API_KEY_HEADER: "Authorization"
+      # TRANSLATION_PROVIDER: "mock"   # 本地联调可用 mock

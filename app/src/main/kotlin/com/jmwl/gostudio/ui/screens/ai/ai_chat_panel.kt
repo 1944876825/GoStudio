@@ -1,5 +1,6 @@
 package com.jmwl.gostudio.ui.screens.ai
 
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.sp
 import com.jmwl.gostudio.ai.ai_agent_loop
 import com.jmwl.gostudio.ai.effective_context_chars
 import com.jmwl.gostudio.ui.theme.app_theme_provider
+import com.jmwl.gostudio.ui.theme.motion
 import kotlinx.coroutines.launch
 
 /**
@@ -76,38 +78,12 @@ fun ai_chat_panel(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize()) {
-        var show_clear_confirm by remember { mutableStateOf(false) }
-        var show_history by remember { mutableStateOf(false) }
-        var sessions by remember { mutableStateOf(agent.list_sessions()) }
-        // 历史会话覆盖层（替换整个面板内容）
-        if (show_history) {
-            ai_session_history_screen(
-                sessions = sessions,
-                current_session_id = agent.current_session_id(),
-                on_back = { show_history = false },
-                on_switch = { new_id ->
-                    scope.launch {
-                        agent.switch_session(new_id)
-                        show_history = false
-                    }
-                },
-                on_new = {
-                    agent.new_session()
-                    sessions = agent.list_sessions()
-                    show_history = false
-                },
-                on_rename = { id, title ->
-                    agent.rename_session(title)
-                    sessions = agent.list_sessions()
-                },
-                on_delete = { id ->
-                    agent.delete_session_by_id(id)
-                    sessions = agent.list_sessions()
-                }
-            )
-            return@Column
-        }
+    var show_clear_confirm by remember { mutableStateOf(false) }
+    var show_history by remember { mutableStateOf(false) }
+    var sessions by remember { mutableStateOf(agent.list_sessions()) }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
         // 顶部工具条：模型选择 + 设置 + 历史
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -169,7 +145,7 @@ fun ai_chat_panel(
                 state = list_state,
                 contentPadding = PaddingValues(vertical = 6.dp)
             ) {
-                itemsIndexed(agent.messages, key = { index, msg -> "$index-${msg.timestamp}-${msg.role.name}" }) { index, msg ->
+                itemsIndexed(agent.messages, key = { _, msg -> msg.uid }) { index, msg ->
                     ai_message_bubble(
                         message = msg,
                         show_thinking = show_thinking,
@@ -333,6 +309,46 @@ fun ai_chat_panel(
                 ) {
                     Icon(Icons.Default.ArrowUpward, contentDescription = "发送", tint = colors.dialog_clone_text, modifier = Modifier.size(20.dp))
                 }
+            }
+        }
+        }
+
+        // 历史会话覆盖层：从右滑入覆盖整个面板（与全局页面过渡同节奏）
+        androidx.compose.animation.AnimatedVisibility(
+            visible = show_history,
+            enter = androidx.compose.animation.slideInHorizontally(
+                tween(motion.BASE, easing = motion.quiet)
+            ) { it } + androidx.compose.animation.fadeIn(tween(motion.BASE, easing = motion.soft)),
+            exit = androidx.compose.animation.slideOutHorizontally(
+                tween(motion.BASE, easing = motion.quiet)
+            ) { it } + androidx.compose.animation.fadeOut(tween(motion.BASE, easing = motion.soft))
+        ) {
+            Box(modifier = Modifier.fillMaxSize().background(colors.gradient_start)) {
+                androidx.activity.compose.BackHandler(enabled = show_history) { show_history = false }
+                ai_session_history_screen(
+                    sessions = sessions,
+                    current_session_id = agent.current_session_id(),
+                    on_back = { show_history = false },
+                    on_switch = { new_id ->
+                        scope.launch {
+                            agent.switch_session(new_id)
+                            show_history = false
+                        }
+                    },
+                    on_new = {
+                        agent.new_session()
+                        sessions = agent.list_sessions()
+                        show_history = false
+                    },
+                    on_rename = { id, title ->
+                        agent.rename_session(title)
+                        sessions = agent.list_sessions()
+                    },
+                    on_delete = { id ->
+                        agent.delete_session_by_id(id)
+                        sessions = agent.list_sessions()
+                    }
+                )
             }
         }
     }

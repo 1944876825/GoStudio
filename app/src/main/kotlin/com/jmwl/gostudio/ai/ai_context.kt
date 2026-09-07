@@ -93,6 +93,7 @@ fun build_system_prompt(env: ai_environment_context, enabled_tools: List<String>
 
     sb.appendLine("## 回复风格")
     sb.appendLine("- 用中文回复，代码和技术术语保持原文")
+    sb.appendLine("- 展示代码、命令、命令输出、目录结构或文件内容时，必须使用 ``` 围栏代码块并标注语言（如 go、bash），绝不要以纯文本粘贴")
     when (tone) {
         "professional" -> {
             sb.appendLine("- 保持严谨专业，注重准确性，用术语精确描述")

@@ -76,6 +76,7 @@ private val route_levels = mapOf(
     "agent" to 1,
     "learn" to 1,
     "about" to 2,
+    "feedback" to 2,
     "theme_settings" to 2,
     "editor_settings" to 2,
     "ai_settings" to 2,
@@ -239,6 +240,7 @@ fun main_navigation(
                     on_ai_settings_click = { nav_controller.navigate("ai_settings") },
                     on_git_settings_click = { nav_controller.navigate("git_settings") },
                     on_about_click = { nav_controller.navigate("about") },
+                    on_feedback_click = { nav_controller.navigate("feedback") },
                     on_project_click = on_project_click,
                     on_project_copy = on_project_copy,
                     on_project_delete = on_project_delete,
@@ -308,13 +310,17 @@ fun main_navigation(
                     on_editor_click = { nav_controller.navigate("editor_settings") },
                     on_ai_click = { nav_controller.navigate("ai_settings") },
                     on_git_click = { nav_controller.navigate("git_settings") },
-                    on_about_click = { nav_controller.navigate("about") }
+                    on_about_click = { nav_controller.navigate("about") },
+                    on_feedback_click = { nav_controller.navigate("feedback") }
                 )
             }
             composable("about") {
                 main_about_screen(
                     on_back = { nav_controller.popBackStack() }
                 )
+            }
+            composable("feedback") {
+                feedback_history_screen(on_back = { nav_controller.popBackStack() })
             }
             composable("theme_settings") {
                 main_theme_settings_screen(

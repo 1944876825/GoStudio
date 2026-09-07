@@ -381,6 +381,11 @@ fun ai_message_bubble(
     on_regenerate: (() -> Unit)? = null,
     on_edit: ((String) -> Unit)? = null
 ) {
+    // TOOL 结果消息不单独显示气泡：内容已归入其 assistant 消息的工具卡片。
+    // 若在这里渲染，工具原始输出（ls 目录列表、文件内容等）会以聊天气泡形式
+    // 重复出现，且长按删除会拆散 assistant/tool_calls 配对导致下轮请求被拒。
+    if (message.role == ai_message_role.TOOL) return
+
     val has_visible = message.has_visible_text ||
         (show_thinking && message.tool_executions.isNotEmpty()) ||
         // 流式占位（还没收到首个 token）也要显示气泡，承载「思考中」加载动画
@@ -436,13 +441,23 @@ fun ai_message_bubble(
                     if (message.streaming && !message.has_visible_text && message.reasoning.isBlank()) {
                         ai_thinking_indicator()
                     }
-                    // 文本内容（Markdown 渲染：标题/列表/表格/代码块/行内格式）
+                    // 文本内容：assistant 走 Markdown 渲染；user 按原文显示
+                    // （用户输入里的 * # - ` 不应被当成语法格式化）
                     if (message.has_visible_text) {
-                        ai_markdown_text(
-                            text = message.text,
-                            color = if (message.is_error) colors.danger else colors.card_text_title,
-                            streaming = message.streaming
-                        )
+                        if (is_user) {
+                            Text(
+                                text = message.text,
+                                fontSize = 13.sp,
+                                lineHeight = 19.sp,
+                                color = if (message.is_error) colors.danger else colors.card_text_title
+                            )
+                        } else {
+                            ai_markdown_text(
+                                text = message.text,
+                                color = if (message.is_error) colors.danger else colors.card_text_title,
+                                streaming = message.streaming
+                            )
+                        }
                     }
                 }
             }
@@ -524,8 +539,9 @@ fun ai_tool_execution_card(exec: ai_tool_execution) {
                             text = exec.to_result_content().take(2000),
                             fontSize = 9.5.sp, fontFamily = FontFamily.Monospace,
                             color = if (exec.error_message != null) colors.danger else colors.card_text_subtitle,
-                            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
-                                .heightIn(max = 180.dp)
+                            // heightIn 必须在 verticalScroll 外层：这里处于 expandVertically 内，
+                            // 动画会用无界高度测量内容，先滚动后限高会让 scrollable 拿到 infinity 直接崩溃
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp).verticalScroll(rememberScrollState())
                                 .background(colors.editor_bg.copy(alpha = 0.4f)).padding(6.dp)
                         )
                     }
@@ -562,7 +578,9 @@ fun ai_reasoning_card(reasoning: String, streaming: Boolean) {
     val colors = app_theme_provider.colors
     val context = androidx.compose.ui.platform.LocalContext.current
     val auto_expand = remember { com.jmwl.gostudio.ai.load_ai_settings(context).auto_expand_thinking }
-    var expanded by remember(reasoning.isNotEmpty()) { mutableStateOf(streaming || auto_expand) }
+    // key 含 streaming：流式结束（true→false）时重置回「默认折叠」，与注释声明一致；
+    // 只用 isNotEmpty 做 key 时结束后会一直保持展开
+    var expanded by remember(reasoning.isNotEmpty(), streaming) { mutableStateOf(streaming || auto_expand) }
 
     Surface(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))

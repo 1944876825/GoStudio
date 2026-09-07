@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GoStudio · 错误反馈后台</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 登录视图 -->
+  <div id="login-view" class="login-wrap hidden">
+    <form id="login-form" class="card login-card" autocomplete="off">
+      <div class="login-logo">GoStudio</div>
+      <div class="login-sub">错误反馈管理后台</div>
+      <label class="field">
+        <span>用户名</span>
+        <input id="login-username" type="text" placeholder="admin" autocomplete="username">
+      </label>
+      <label class="field">
+        <span>密码</span>
+        <input id="login-password" type="password" placeholder="••••••••" autocomplete="current-password">
+      </label>
+      <div id="login-error" class="login-error hidden"></div>
+      <button type="submit" class="btn primary block">登录</button>
+    </form>
+  </div>
+
+  <!-- 主视图 -->
+  <div id="main-view" class="hidden">
+    <header class="topbar">
+      <div class="topbar-title">错误反馈后台</div>
+      <div class="topbar-actions">
+        <span id="admin-user" class="topbar-user"></span>
+        <button id="logout-btn" class="btn ghost small">退出登录</button>
+      </div>
+    </header>
+
+    <!-- 列表页 -->
+    <main id="list-page" class="page">
+      <section class="stats-row">
+        <div class="stat-card"><div class="stat-value" id="stat-total-types">–</div><div class="stat-label">错误类型</div></div>
+        <div class="stat-card"><div class="stat-value danger" id="stat-open-types">–</div><div class="stat-label">未处理</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-today-reports">–</div><div class="stat-label">近 24h 上报</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-total-reports">–</div><div class="stat-label">上报总数</div></div>
+      </section>
+
+      <div class="toolbar">
+        <div class="tabs" id="status-tabs">
+          <button class="tab active" data-status="">全部</button>
+          <button class="tab" data-status="open">未处理</button>
+          <button class="tab" data-status="resolved">已修复</button>
+        </div>
+        <input id="search-input" class="search" type="search" placeholder="搜索错误标题或指纹…">
+      </div>
+
+      <div id="error-list" class="type-list"></div>
+      <div id="list-empty" class="empty hidden">没有匹配的错误类型</div>
+      <div class="pager">
+        <button id="prev-page" class="btn ghost small">上一页</button>
+        <span id="page-info" class="page-info"></span>
+        <button id="next-page" class="btn ghost small">下一页</button>
+      </div>
+    </main>
+
+    <!-- 详情页 -->
+    <main id="detail-page" class="page hidden">
+      <button id="back-btn" class="btn ghost small">← 返回列表</button>
+      <div id="detail-header"></div>
+      <h3 class="section-title">上报记录</h3>
+      <div id="report-list"></div>
+      <div class="pager">
+        <button id="report-prev" class="btn ghost small">上一页</button>
+        <span id="report-page-info" class="page-info"></span>
+        <button id="report-next" class="btn ghost small">下一页</button>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

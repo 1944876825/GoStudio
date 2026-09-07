@@ -1,3 +1,22 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.ComposeEmptyActivity" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.ComposeEmptyActivity" parent="android:Theme.Material.Light.NoActionBar">
+        <!-- 全局 Activity 页面过渡：与应用内 Compose shared-axis（右进左退 + 淡入淡出）同节奏 -->
+        <item name="android:windowAnimationStyle">@style/WindowAnimation.SharedAxis</item>
+    </style>
+
+    <style name="WindowAnimation.SharedAxis" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/shared_axis_enter</item>
+        <item name="android:activityOpenExitAnimation">@anim/shared_axis_exit</item>
+        <item name="android:activityCloseEnterAnimation">@anim/shared_axis_pop_enter</item>
+        <item name="android:activityCloseExitAnimation">@anim/shared_axis_pop_exit</item>
+        <item name="android:taskOpenEnterAnimation">@anim/shared_axis_enter</item>
+        <item name="android:taskOpenExitAnimation">@anim/shared_axis_exit</item>
+        <item name="android:taskCloseEnterAnimation">@anim/shared_axis_pop_enter</item>
+        <item name="android:taskCloseExitAnimation">@anim/shared_axis_pop_exit</item>
+    </style>
+
+    <!-- View 系 Material3 主题的两个宿主（运行预览 / 布局设计器）：同样挂上全局转场 -->
+    <style name="Theme.GoStudio.MaterialSharedAxis" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowAnimationStyle">@style/WindowAnimation.SharedAxis</item>
+    </style>
 </resources>

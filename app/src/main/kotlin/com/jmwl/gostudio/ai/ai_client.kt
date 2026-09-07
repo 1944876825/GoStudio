@@ -11,6 +11,29 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 /**
+ * 把 HTTP 错误响应转成用户可读的消息：
+ * 优先提取 JSON 里的 error.message（很多网关返回 {"error":{"message":...}}），
+ * 再附上常见状态码的中文提示（401/403 密钥或权限、429 限流、5xx 服务端）。
+ */
+internal fun friendly_http_error(prefix: String, code: Int, body: String, fallback_message: String): String {
+    val trimmed = body.trim().take(300)
+    val detail = runCatching {
+        val obj = JsonParser.parseString(trimmed).asJsonObject
+        (obj.getAsJsonObject("error")?.get("message") ?: obj.get("message"))
+            ?.takeIf { !it.isJsonNull }?.asString
+    }.getOrNull()?.trim()?.ifBlank { null }
+        ?: trimmed.ifBlank { fallback_message }
+    val hint = when (code) {
+        401, 403 -> "\n💡 请检查 API Key 是否有效，或切换到该 Key 有权限的模型（顶部可快捷切换）。"
+        404 -> "\n💡 请检查 Base URL 和模型名是否正确。"
+        429 -> "\n💡 请求过于频繁或额度不足，请稍后重试。"
+        in 500..599 -> "\n💡 服务端错误，请稍后重试。"
+        else -> ""
+    }
+    return "$prefix $code: $detail$hint"
+}
+
+/**
  * AI 流式响应回调。
  * - on_text: 收到一段文本增量（可能很短，如单个字/词），UI 累加显示
  * - on_reasoning: reasoning 模型的思考链增量（DeepSeek reasoning_content / Anthropic thinking block）
@@ -97,7 +120,7 @@ class ai_client(
         http_client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val errBody = response.body?.string()?.take(300) ?: ""
-                throw RuntimeException("${response.code}: ${errBody.ifBlank { response.message }}")
+                throw RuntimeException(friendly_http_error("获取模型列表失败", response.code, errBody, response.message))
             }
             val body = response.body?.string() ?: throw RuntimeException("空响应")
             val json = JsonParser.parseString(body).asJsonObject
@@ -111,12 +134,13 @@ class ai_client(
     /**
      * 连接测试（参考 OpenMinis 的 ModelQuickTestSheet）：发一条最小非流式请求，
      * 确认「这个模型 + 这把密钥」真的能用。返回 (回复文本, 耗时毫秒)；失败抛异常。
+     * [test_model] 允许临时测任意模型（模型列表批量测试），默认测当前配置的模型。
      */
-    fun quick_test(): Pair<String, Long> {
+    fun quick_test(test_model: String = model): Pair<String, Long> {
         val started = System.currentTimeMillis()
         if (settings.provider == ai_provider.ANTHROPIC) {
             val payload = linkedMapOf<String, Any>(
-                "model" to model,
+                "model" to test_model,
                 "max_tokens" to 64,
                 "messages" to listOf(mapOf("role" to "user", "content" to "连接测试，请只回复两个字：可用"))
             )
@@ -129,7 +153,7 @@ class ai_client(
                 .build()
             test_client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    throw RuntimeException("${response.code}: ${response.body?.string()?.take(300) ?: response.message}")
+                    throw RuntimeException(friendly_http_error("连接测试失败", response.code, response.body?.string()?.take(300) ?: "", response.message))
                 }
                 val json = JsonParser.parseString(response.body?.string() ?: "").asJsonObject
                 val text = json.getAsJsonArray("content")
@@ -139,7 +163,7 @@ class ai_client(
             }
         }
         val payload = linkedMapOf<String, Any>(
-            "model" to model,
+            "model" to test_model,
             "max_tokens" to 64,
             "messages" to listOf(mapOf("role" to "user", "content" to "连接测试，请只回复两个字：可用"))
         )
@@ -151,7 +175,7 @@ class ai_client(
             .build()
         test_client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw RuntimeException("${response.code}: ${response.body?.string()?.take(300) ?: response.message}")
+                throw RuntimeException(friendly_http_error("连接测试失败", response.code, response.body?.string()?.take(300) ?: "", response.message))
             }
             val json = JsonParser.parseString(response.body?.string() ?: "").asJsonObject
             val text = json.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject
@@ -176,7 +200,7 @@ class ai_client(
             if (!response.isSuccessful) {
                 val errBody = response.body?.string()?.take(500) ?: ""
                 Log.e("GoStudio_AI", "OpenAI 请求失败 ${response.code}\nURL: $url\n请求体: ${body.take(800)}\n响应: $errBody")
-                callback.on_error("请求失败 ${response.code}: ${errBody.ifBlank { response.message }}")
+                callback.on_error(friendly_http_error("请求失败", response.code, errBody, response.message))
                 return
             }
             parse_openai_sse(response.body?.byteStream() ?: return, callback)
@@ -252,7 +276,8 @@ class ai_client(
         http_client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val errBody = response.body?.string()?.take(500) ?: ""
-                callback.on_error("Anthropic 请求失败 ${response.code}: ${errBody.ifBlank { response.message }}")
+                Log.e("GoStudio_AI", "Anthropic 请求失败 ${response.code}\nURL: $url\n响应: $errBody")
+                callback.on_error(friendly_http_error("请求失败", response.code, errBody, response.message))
                 return
             }
             parse_anthropic_sse(response.body?.byteStream() ?: return, callback)

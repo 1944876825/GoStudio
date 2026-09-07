@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,6 +20,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jmwl.gostudio.project.project_manager
+import com.jmwl.gostudio.ui.components.remember_project_icon_bitmap
+import com.jmwl.gostudio.ui.components.project_icon_image
 import com.jmwl.gostudio.ui.theme.*
 import java.io.File
 import java.text.SimpleDateFormat
@@ -122,6 +125,17 @@ private fun ProjectRow(
     val modified = remember(project_dir) {
         runCatching { date_format.format(Date(project_dir.lastModified())) }.getOrDefault("")
     }
+    // App 界面项目标志：与打包流程一致，以 layout.xml 是否存在判断；图标取项目配置的 icon_path（与打包 APK 同一份）
+    val is_app_ui = remember(project_dir) { File(project_dir, "layout.xml").isFile }
+    val app_icon_path = remember(project_dir, is_app_ui) {
+        if (!is_app_ui) null
+        else project_manager.read_project_ide_config(project_dir.absolutePath).app.icon_path
+            .takeIf { it.isNotBlank() }
+            ?.let { File(project_dir, it) }
+            ?.takeIf { it.isFile }
+            ?.absolutePath
+    }
+    val icon_bitmap = remember_project_icon_bitmap(app_icon_path.orEmpty())
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -132,19 +146,36 @@ private fun ProjectRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .size(30.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(colors.dialog_icon.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                Icons.Default.Folder,
-                contentDescription = null,
-                tint = colors.dialog_icon,
-                modifier = Modifier.size(16.dp)
-            )
+        when {
+            icon_bitmap != null -> project_icon_image(icon_bitmap, size = 30.dp, corner = 8.dp)
+            is_app_ui -> Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(colors.dialog_icon.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.Smartphone,
+                    contentDescription = null,
+                    tint = colors.dialog_icon,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            else -> Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(colors.dialog_icon.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.Folder,
+                    contentDescription = null,
+                    tint = colors.dialog_icon,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(
