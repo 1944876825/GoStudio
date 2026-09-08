@@ -1,0 +1,7 @@
+{
+  "id": "json-to-go",
+  "name": "json2code",
+  "kind": "json-to-go",
+  "icon": "DataObject",
+  "description": "粘贴 JSON，生成带 json tag 的 Go 结构体定义"
+}

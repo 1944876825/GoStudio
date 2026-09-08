@@ -1,0 +1,9 @@
+{
+  "id": "com.gostudio.jsontogo",
+  "name": "JSON → Go 结构体",
+  "version": "1.0.1",
+  "description": "粘贴 JSON 生成带 json tag 的 Go 结构体定义，一键复制到剪贴板。",
+  "author": "GoStudio",
+  "category": "builtin",
+  "min_app_version": 109
+}

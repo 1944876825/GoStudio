@@ -63,6 +63,8 @@ class gostudio_application : Application() {
         com.jmwl.gostudio.toolchain.goproxy_store.init(this)
 
         plugin_manager.init(this)
+        // 内置插件随 APK 发布：启动时释放到插件目录（版本升级覆盖，启用状态不动）
+        plugin_manager.release_builtin_plugins(this)
 
         // 旧版本装的 Go 没把 GOPROXY 写进 go env 文件，终端里走默认 proxy.golang.org：
         // 启动时补写一次（文件里已有 GOPROXY 则跳过，不影响用户自定义）。

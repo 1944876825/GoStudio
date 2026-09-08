@@ -42,6 +42,11 @@ import com.jmwl.gostudio.ui.theme.app_theme_provider
 import com.jmwl.gostudio.ui.theme.motion
 import com.jmwl.gostudio.ui.dialogs.editor.editor_create_entry_dialog
 import com.jmwl.gostudio.ui.dialogs.editor.editor_create_file_template
+import com.jmwl.gostudio.ui.dialogs.editor.editor_tool_dialog
+import com.jmwl.gostudio.plugins.enabled_tools
+import com.jmwl.gostudio.plugins.plugin_manager
+import com.jmwl.gostudio.plugins.plugin_tool_def
+import com.jmwl.gostudio.tools.tool_engine
 import kotlinx.coroutines.launch
 import io.github.rosemoe.sora.event.InterceptTarget
 import io.github.rosemoe.sora.event.EventReceiver
@@ -184,6 +189,14 @@ internal fun editor_screen(
     var create_dialog_request by remember { mutableStateOf<editor_create_dialog_request?>(null) }
     var show_ai_page by remember { mutableStateOf(false) }
     var show_project_config by remember { mutableStateOf(false) }
+    // 插件工具：每个已启用的工具在「更多」菜单独立一项（内置插件默认启用）
+    var plugin_tools by remember { mutableStateOf(plugin_manager.enabled_tools(tool_engine.supported_kinds)) }
+    var active_tool by remember { mutableStateOf<plugin_tool_def?>(null) }
+    DisposableEffect(Unit) {
+        val listener = { plugin_tools = plugin_manager.enabled_tools(tool_engine.supported_kinds) }
+        plugin_manager.add_listener(listener)
+        onDispose { plugin_manager.remove_listener(listener) }
+    }
     // 外部触发打开 AI 页面（编辑器选区 AI 动作）
     LaunchedEffect(ai_open_trigger) {
         if (ai_open_trigger > 0) show_ai_page = true
@@ -345,6 +358,8 @@ internal fun editor_screen(
                             build_stopping = output_panel_state.task_stopping,
                             on_toggle_read_only = on_toggle_read_only,
                             on_open_ai = { show_ai_page = true },
+                            tools = plugin_tools,
+                            on_open_tool = { active_tool = it },
                             on_open_project_config = { show_project_config = true }
                         )
                     }
@@ -692,6 +707,13 @@ internal fun editor_screen(
                     }
                 },
                 on_dismiss = { create_dialog_request = null }
+            )
+        }
+
+        active_tool?.let { tool ->
+            editor_tool_dialog(
+                tool_def = tool,
+                on_dismiss = { active_tool = null }
             )
         }
 

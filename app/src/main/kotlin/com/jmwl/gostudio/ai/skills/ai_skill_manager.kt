@@ -33,16 +33,20 @@ enum class skill_source { BUILT_IN, GLOBAL, PROJECT, PLUGIN }
 class ai_skill_manager(
     private val global_skills_dir: File,   // <app home>/.ai/skills
     private val project_skills_dir: File?, // <project>/.ai/skills（可能无项目）
-    private val plugin_skill_dirs: List<File> = emptyList() // 插件提供的 skills 目录
+    // 插件 skill 目录以 provider 传入：启用状态在会话中途可能变化，每次 discover 时现取
+    private val plugin_skill_dirs_provider: () -> List<File> = { emptyList() }
 ) {
     /** 已发现的所有 skill（按 name 去重，项目级覆盖同名全局） */
     private var skills: List<ai_skill> = emptyList()
+
+    /** 上次扫描时的插件变更代数；不一致说明插件开关变了，需要重扫 */
+    private var seen_plugin_generation: Long = Long.MIN_VALUE
 
     /** 扫描并加载 skill 索引（在 IO 线程调用） */
     fun discover() {
         val result = linkedMapOf<String, ai_skill>()
         // 优先级：插件 < 全局 < 项目（后加载覆盖同名）
-        plugin_skill_dirs.forEach { dir ->
+        plugin_skill_dirs_provider().forEach { dir ->
             scan_dir(dir, skill_source.PLUGIN, is_project_relative = false, result)
         }
         scan_dir(global_skills_dir, skill_source.GLOBAL, is_project_relative = false, result)
@@ -50,6 +54,17 @@ class ai_skill_manager(
             scan_dir(it, skill_source.PROJECT, is_project_relative = true, result)
         }
         skills = result.values.toList()
+        seen_plugin_generation = com.jmwl.gostudio.plugins.plugin_manager.generation
+    }
+
+    /**
+     * 插件启用状态可能在会话中途变化：查询前对齐一次。
+     * 代数没变就不重扫，平时开销为零。
+     */
+    fun ensure_current() {
+        if (seen_plugin_generation != com.jmwl.gostudio.plugins.plugin_manager.generation) {
+            discover()
+        }
     }
 
     private fun scan_dir(dir: File, source: skill_source, is_project_relative: Boolean, out: MutableMap<String, ai_skill>) {
@@ -103,6 +118,7 @@ class ai_skill_manager(
 
     /** 给 system prompt 用的 skill 索引（name + description 列表） */
     fun skill_index_text(): String {
+        ensure_current()
         if (skills.isEmpty()) return ""
         val sb = StringBuilder()
         sb.appendLine("可用技能（Skills）。需要时用 read 工具读取对应 SKILL.md 获取详细指令：")
@@ -113,7 +129,10 @@ class ai_skill_manager(
     }
 
     /** 按 name 查 skill */
-    fun find(name: String): ai_skill? = skills.firstOrNull { it.name == name }
+    fun find(name: String): ai_skill? {
+        ensure_current()
+        return skills.firstOrNull { it.name == name }
+    }
 
     /** 手动激活某 skill：返回其 SKILL.md 全文（供注入对话） */
     fun activate(name: String): String? {
@@ -122,7 +141,10 @@ class ai_skill_manager(
     }
 
     /** 列出所有 skill（供管理 UI） */
-    fun all(): List<ai_skill> = skills.sortedBy { it.name }
+    fun all(): List<ai_skill> {
+        ensure_current()
+        return skills.sortedBy { it.name }
+    }
 
     /** 创建新 skill（写到全局目录），返回是否成功 */
     fun create_skill(name: String, description: String, content: String): Boolean {

@@ -98,6 +98,8 @@ dependencies {
     implementation("com.android.tools.build:apksig:8.5.2")
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.google.truth:truth:1.4.5")
+    // 单元测试里替换 Android 的 org.json 空桩（默认 stub 调用即抛异常）
+    testImplementation("org.json:json:20240303")
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.lifecycle.runtime.ktx)

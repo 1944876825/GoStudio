@@ -154,7 +154,7 @@ fun main_navigation(
         val global_skills_dir = java.io.File(ai_root, "skills")
         val global_prompts_dir = java.io.File(ai_root, "prompts")
         runCatching { com.jmwl.gostudio.ai.skills.release_builtin_skills(context, global_skills_dir) }
-        val skill_mgr = com.jmwl.gostudio.ai.skills.ai_skill_manager(global_skills_dir, null, com.jmwl.gostudio.plugins.plugin_manager.skill_dirs())
+        val skill_mgr = com.jmwl.gostudio.ai.skills.ai_skill_manager(global_skills_dir, null, plugin_skill_dirs_provider = { com.jmwl.gostudio.plugins.plugin_manager.skill_dirs() })
         ai_agent_loop(
             settings_provider = {
                 // 会话选择优先（快照含 base_url/key）；用内存缓存避免每轮 Keystore I/O

@@ -77,12 +77,14 @@ object plugin_marketplace {
                 response.use {
                     if (!it.isSuccessful) throw IllegalStateException("下载失败：HTTP ${it.code}")
                     val bytes = it.body!!.bytes()
-                    if (entry.sha256.isNotBlank()) {
-                        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
-                        val actual = digest.joinToString("") { b -> "%02x".format(b) }
-                        if (!actual.equals(entry.sha256, ignoreCase = true)) {
-                            throw IllegalStateException("校验失败：文件可能被篡改")
-                        }
+                    // 校验值缺失即拒绝：市场插件必须可验证完整性，防止索引被篡改后装进未校验的包
+                    if (entry.sha256.isBlank()) {
+                        throw IllegalStateException("插件包缺少 sha256 校验值，已拒绝安装")
+                    }
+                    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+                    val actual = digest.joinToString("") { b -> "%02x".format(b) }
+                    if (!actual.equals(entry.sha256, ignoreCase = true)) {
+                        throw IllegalStateException("校验失败：文件可能被篡改")
                     }
                     bytes.inputStream().use { stream ->
                         plugin_manager.install(context, stream).getOrThrow()

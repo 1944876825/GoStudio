@@ -259,6 +259,18 @@ fun editor_tabs_bar(
 }
 
 /**
+ * 工具图标白名单：tool.json 只声明名字，宿主解析成 Material 图标（不加载任意资源）。
+ */
+fun plugin_tool_icon(name: String): ImageVector = when (name.lowercase()) {
+    "dataobject" -> Icons.Default.DataObject
+    "code" -> Icons.Default.Code
+    "build" -> Icons.Default.Build
+    "extension" -> Icons.Default.Extension
+    "translate" -> Icons.Default.Translate
+    else -> Icons.Default.Construction
+}
+
+/**
  * 工作区顶栏：抽屉切换 · 项目名 · 保存 · 直接运行 · AI · 更多菜单。
  * 构建/测试等次级任务收纳在更多菜单；菜单视觉对齐 CodeAssist 的圆角浮层。
  */
@@ -285,6 +297,9 @@ fun editor_top_bar(
     build_stopping: Boolean,
     on_toggle_read_only: () -> Unit = {},
     on_open_ai: () -> Unit = {},
+    /** 已启用的插件工具：每个在「更多」菜单独立一项 */
+    tools: List<com.jmwl.gostudio.plugins.plugin_tool_def> = emptyList(),
+    on_open_tool: (com.jmwl.gostudio.plugins.plugin_tool_def) -> Unit = {},
     on_open_project_config: () -> Unit = {}
 ) {
     val colors = app_theme_provider.colors
@@ -368,6 +383,14 @@ fun editor_top_bar(
                 on_click = on_open_ai
             )
 
+            // 只读切换：眼睛图标（开启时高亮），原在「更多」菜单里
+            editor_top_bar_icon_button(
+                icon = if (read_only) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                content_description = if (read_only) "退出只读模式" else "切换只读模式",
+                tint = if (read_only) accent else colors.editor_toolbar_icon,
+                on_click = on_toggle_read_only
+            )
+
             Box {
                 editor_top_bar_icon_button(
                     icon = Icons.Default.MoreVert,
@@ -417,13 +440,15 @@ fun editor_top_bar(
                         more_menu_open = false
                         on_open_project_config()
                     }
-                    editor_menu_item(
-                        icon = if (read_only) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        label = if (read_only) "退出只读模式" else "切换只读模式",
-                        active = read_only
-                    ) {
-                        more_menu_open = false
-                        on_toggle_read_only()
+                    // 插件工具：每个已启用的工具独立一项，直接打开各自弹窗
+                    tools.forEach { tool ->
+                        editor_menu_item(
+                            icon = plugin_tool_icon(tool.icon),
+                            label = tool.name
+                        ) {
+                            more_menu_open = false
+                            on_open_tool(tool)
+                        }
                     }
                 }
             }

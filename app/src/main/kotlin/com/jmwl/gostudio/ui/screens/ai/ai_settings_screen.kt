@@ -2295,7 +2295,7 @@ private fun ai_skill_settings_screen(project_dir: java.io.File?, on_back: () -> 
         com.jmwl.gostudio.ai.skills.ai_skill_manager(
             File(paths.home_dir, ".ai/skills"),
             project_dir?.let { File(it, ".ai/skills") },
-            com.jmwl.gostudio.plugins.plugin_manager.skill_dirs()
+            plugin_skill_dirs_provider = { com.jmwl.gostudio.plugins.plugin_manager.skill_dirs() }
         ).also { it.discover() }
     }
     var skills by remember { mutableStateOf(manager.all()) }
