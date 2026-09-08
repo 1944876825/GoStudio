@@ -34,6 +34,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -84,7 +85,7 @@ class main_activity : ComponentActivity() {
                     on_project_delete = ::delete_project,
                     on_project_export = ::export_project,
                     on_create_project = ::create_project,
-                    on_open_project = ::open_project_path,
+                    on_import_project = ::import_project,
                     on_clone_project = ::clone_github_project,
                     on_toolchain_trigger_change = { trigger ->
                         toolchain_tasks = if (trigger != null) {
@@ -381,17 +382,119 @@ class main_activity : ComponentActivity() {
         return true
     }
 
-    private fun open_project_path(project_path: String) {
-        lifecycleScope.launch {
-            project_manager.ensure_project_config(project_path)
-            val result = project_manager.add_recent_project(project_path)
-            result.onSuccess { project ->
-                reload_recent_projects()
-                open_editor(project.name, project.path)
-            }.onFailure { error ->
-                app_toast.show(this@main_activity, "打开失败: ${error.message}", app_toast.LENGTH_LONG)
+    /**
+     * 从文件管理器（SAF OpenDocumentTree）选中的目录导入项目：
+     * 整目录复制到内部 projects 根（proot 需要内部存储路径），再走与克隆一致的打开流程。
+     */
+    private suspend fun import_project(
+        uri: Uri,
+        on_log: (String) -> Unit,
+        on_progress: (Int) -> Unit
+    ): Boolean {
+        val projects_root = project_manager.default_projects_dir()
+
+        on_progress(3)
+        val root = withContext(Dispatchers.IO) {
+            runCatching { DocumentFile.fromTreeUri(this@main_activity, uri) }.getOrNull()
+        } ?: run {
+            on_log("无法读取所选目录")
+            on_progress(100)
+            return false
+        }
+
+        val base_name = withContext(Dispatchers.IO) {
+            root.name.orEmpty()
+                .replace(Regex("[^A-Za-z0-9._-]"), "_")
+                .replace(Regex("^[.]*"), "")
+                .ifBlank { "imported-project" }
+        }
+        // 提前校验 go.mod，避免复制完才发现不是 Go 项目
+        val has_go_mod = withContext(Dispatchers.IO) {
+            root.listFiles().any { !it.isDirectory && it.name == "go.mod" }
+        }
+        if (!has_go_mod) {
+            on_log("所选目录根下没有 go.mod，请选择 Go 项目的根目录")
+            on_progress(100)
+            return false
+        }
+
+        val project_dir = withContext(Dispatchers.IO) {
+            var candidate = File(projects_root, base_name)
+            var index = 1
+            while (candidate.exists()) {
+                candidate = File(projects_root, "${base_name}-${index++}")
+            }
+            candidate
+        }
+        on_log("导入：$base_name")
+        on_log("目标：${project_dir.name}")
+        on_progress(8)
+
+        val copy_result = withContext(Dispatchers.IO) {
+            runCatching {
+                var total = 0
+                fun count_files(dir: DocumentFile) {
+                    dir.listFiles().forEach { child ->
+                        if (child.isDirectory) count_files(child) else total++
+                    }
+                }
+                count_files(root)
+                on_log("共 $total 个文件")
+
+                var copied = 0
+                fun copy_tree(source: DocumentFile, target: File) {
+                    if (!target.exists() && !target.mkdirs()) {
+                        throw IllegalStateException("无法创建目录 ${target.name}")
+                    }
+                    source.listFiles().forEach { child ->
+                        val child_name = child.name ?: return@forEach
+                        if (child.isDirectory) {
+                            copy_tree(child, File(target, child_name))
+                        } else {
+                            val output_file = File(target, child_name)
+                            contentResolver.openInputStream(child.uri)?.use { input ->
+                                output_file.outputStream().use { output -> input.copyTo(output) }
+                            } ?: throw IllegalStateException("无法读取文件 $child_name")
+                            copied++
+                            on_progress(10 + (85.0 * copied / total.coerceAtLeast(1)).toInt())
+                        }
+                    }
+                }
+                copy_tree(root, project_dir)
             }
         }
+        if (copy_result.isFailure) {
+            on_progress(100)
+            on_log("复制失败：${copy_result.exceptionOrNull()?.message ?: "未知错误"}")
+            withContext(Dispatchers.IO) { project_dir.deleteRecursively() }
+            return false
+        }
+
+        on_progress(97)
+        val configured = withContext(Dispatchers.IO) {
+            project_manager.ensure_project_config(project_dir.absolutePath)
+        }
+        configured.onFailure { error ->
+            on_progress(100)
+            on_log(error.message ?: "项目配置初始化失败")
+            withContext(Dispatchers.IO) { project_dir.deleteRecursively() }
+            return false
+        }
+
+        val recent = project_manager.add_recent_project(project_dir.absolutePath)
+        recent.onFailure { error ->
+            on_progress(100)
+            on_log("项目加入最近列表失败: ${error.message}")
+            return false
+        }
+
+        on_progress(100)
+        reload_recent_projects()
+        on_log("导入完成：${project_dir.name}")
+        app_toast.show(this, "项目已导入: ${project_dir.name}", app_toast.LENGTH_SHORT)
+        // 导入的项目依赖未缓存，打开后自动 go mod tidy（与克隆一致）
+        open_editor(project_dir.name, project_dir.absolutePath, auto_tidy = true)
+        return true
     }
 
     private fun open_editor(project_name: String, project_path: String, auto_tidy: Boolean = false) {

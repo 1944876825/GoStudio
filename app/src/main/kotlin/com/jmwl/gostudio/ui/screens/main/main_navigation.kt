@@ -1,6 +1,8 @@
 package com.jmwl.gostudio.ui.screens.main
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -53,7 +55,6 @@ import com.jmwl.gostudio.ai.save_ai_settings
 import com.jmwl.gostudio.ui.dialogs.common.install_progress_dialog
 import com.jmwl.gostudio.ui.dialogs.main.clone_project_dialog
 import com.jmwl.gostudio.ui.dialogs.main.new_project_dialog
-import com.jmwl.gostudio.ui.dialogs.main.open_project_dialog
 import com.jmwl.gostudio.ui.dialogs.main.toolchain_custom_install_dialog
 import com.jmwl.gostudio.ui.screens.ai.ai_chat_screen
 import com.jmwl.gostudio.ui.screens.ai.ai_settings_screen
@@ -126,7 +127,7 @@ fun main_navigation(
     on_project_delete: (recent_project) -> Unit,
     on_project_export: (recent_project, android.net.Uri) -> Unit,
     on_create_project: (String, String, String, String) -> Unit,
-    on_open_project: (String) -> Unit,
+    on_import_project: suspend (android.net.Uri, (String) -> Unit, (Int) -> Unit) -> Boolean,
     on_clone_project: suspend (String, (String) -> Unit, (Int) -> Unit) -> Boolean,
     on_toolchain_trigger_change: (toolchain_trigger?) -> Unit,
     on_custom_toolchain_dialog_change: (toolchain_custom_install_request?) -> Unit,
@@ -184,7 +185,6 @@ fun main_navigation(
     var ai_settings_state by remember { mutableStateOf(load_ai_settings(context)) }
 
     var show_new_project_dialog by remember { mutableStateOf(false) }
-    var show_open_project_dialog by remember { mutableStateOf(false) }
     var github_clone_url by remember { mutableStateOf<String?>(null) }
     var show_clone_project_dialog by remember { mutableStateOf(false) }
     val active_toolchain_trigger = toolchain_tasks.firstOrNull()
@@ -192,6 +192,12 @@ fun main_navigation(
 
     // 首页双击返回退出：第一次提示，2 秒内再按才退到后台
     var last_back_press_at by remember { mutableStateOf(0L) }
+
+    // 导入项目：拉起系统文件管理器选目录（SAF OpenDocumentTree），选中后进复制流程
+    var pending_import_uri by remember { mutableStateOf<android.net.Uri?>(null) }
+    val import_launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri -> if (uri != null) pending_import_uri = uri }
 
     BackHandler(enabled = true) {
         if (current_back_stack?.destination?.route != "main") {
@@ -223,7 +229,7 @@ fun main_navigation(
             composable("main") {
                 main_screen(
                     on_new_project = { show_new_project_dialog = true },
-                    on_open_project = { show_open_project_dialog = true },
+                    on_open_project = { import_launcher.launch(null) },
                     on_clone_project = { show_clone_project_dialog = true },
                     recent_projects = recent_projects,
                     on_tools = { nav_controller.navigate("tools") },
@@ -441,13 +447,12 @@ fun main_navigation(
         )
     }
 
-    if (show_open_project_dialog) {
-        open_project_dialog(
-            on_dismiss = { show_open_project_dialog = false },
-            on_open = { project_path ->
-                show_open_project_dialog = false
-                on_open_project(project_path)
-            }
+    pending_import_uri?.let { uri ->
+        install_progress_dialog(
+            title = "导入项目",
+            task = { on_log, on_progress -> on_import_project(uri, on_log, on_progress) },
+            on_dismiss = { pending_import_uri = null },
+            on_success = { pending_import_uri = null },
         )
     }
 

@@ -211,7 +211,7 @@ private fun projects_page(
                 // 主操作卡打头（NewProjectCard）
                 new_project_card(on_click = on_new_project)
                 // 导入项目（CodeAssist ImportGradleCard 同款描边卡）
-                outlined_action_card(Icons.Default.FolderOpen, "导入项目", "打开手机上已有的项目目录", on_open_project)
+                outlined_action_card(Icons.Default.FolderOpen, "导入项目", "从文件管理器选择项目目录导入", on_open_project)
                 outlined_action_card(Icons.Default.CloudDownload, "克隆 Git 项目", "从 GitHub 等仓库地址导入 Go 项目", on_clone_project)
 
                 if (recent_projects.isEmpty()) {

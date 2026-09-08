@@ -40,7 +40,7 @@ object project_manager {
 
     /**
      * 列出内部存储项目目录下的所有 Go 项目（含 go.mod 的子目录）。
-     * 用于「打开项目」对话框的列表展示。
+     * 用于最近项目记录的初始化发现。
      */
     fun list_local_projects(): List<File> {
         val root = default_projects_dir()

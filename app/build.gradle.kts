@@ -92,6 +92,8 @@ android {
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
+    // 导入项目：SAF 目录选择结果的遍历读取（DocumentFile）
+    implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("com.google.android.material:material:1.12.0")
     implementation("com.android.tools.build:apksig:8.5.2")
     testImplementation("junit:junit:4.13.2")
